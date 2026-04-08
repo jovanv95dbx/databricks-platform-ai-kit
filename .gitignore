@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+
+# Terraform
+.terraform/
+terraform.tfstate*
+terraform.tfvars
+.terraform.lock.hcl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials
+*.pem
+*.key
+.env
+
+# Claude Code (created by install.sh and user config)
+.claude/skills/
+
+# Deployments (created at runtime by Claude per customer)
+deployments/

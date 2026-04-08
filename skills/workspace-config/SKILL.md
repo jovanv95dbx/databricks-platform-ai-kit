@@ -1,0 +1,89 @@
+---
+name: databricks-workspace-config
+description: "Configure Databricks workspace settings. Use when the user asks to create SQL warehouses, cluster policies, secret scopes, IP access lists, manage tokens, update workspace settings, or destroy infrastructure."
+---
+
+# Databricks Workspace Configuration
+
+## How to interact with the customer
+
+Apply MINIMAL pushback. These are day-2 operations -- the customer generally knows what they want.
+
+- **PAT with no expiry requested** -- suggest once: "Want to set a 90-day lifetime? Tokens without expiry are a security risk if leaked." If they say no, create it without expiry.
+- **Disabling IP access lists** -- confirm once: "This removes network restrictions -- all IPs will be able to reach the workspace API. Proceed?" Then do it.
+- **terraform destroy** -- ALWAYS confirm before executing. This is irreversible. List what will be destroyed and get explicit yes/no.
+- **Everything else** -- just execute. No pushback on warehouse sizes, policy definitions, secret values, or config keys.
+
+## SQL warehouses
+
+Manage serverless and pro SQL warehouses for BI and ad-hoc queries.
+
+- **List** existing warehouses to see names, sizes, states, and types.
+- **Create** with name, cluster_size (2X-Small through 4X-Large), auto_stop_mins (default 15), and warehouse_type.
+- **Start** a stopped warehouse by ID.
+- **Stop** a running warehouse by ID.
+
+Recommend PRO warehouse type for any workspace with Unity Catalog. PRO supports fine-grained access control, data lineage, and serverless scaling. CLASSIC warehouses lack UC-aware features.
+
+## Cluster policies
+
+Control what users can configure when creating clusters.
+
+- **List** all policies in the workspace.
+- **Create** a policy with a name and JSON definition that restricts spark_version, node_type_id, autoscale ranges, and other cluster attributes.
+- **Get** a specific policy by ID to inspect its definition.
+- **Delete** a policy by ID.
+
+Example restrictions: fix Spark version to a specific LTS release, allowlist specific node types, cap max_workers to prevent runaway costs.
+
+## Secret scopes
+
+Store sensitive values (API keys, connection strings, passwords) that notebooks and jobs can reference without exposing plaintext.
+
+- **Create scope** with a name. Scopes are workspace-level.
+- **Put secret** into a scope with a key and string value.
+- **List secrets** in a scope. Returns metadata only (keys and timestamps) -- secret values are never returned by the API.
+- **Delete** a secret or scope.
+
+## IP access lists
+
+Restrict which IP addresses can reach the workspace API and UI.
+
+- **Create** an allow list (only these IPs can connect) or deny list (block these IPs).
+- **List** existing access lists to audit current restrictions.
+
+IP access lists must be enabled via workspace settings before they take effect. Creating a list does not automatically enable enforcement.
+
+## Token management
+
+Manage personal access tokens (PATs) for API authentication.
+
+- **List** existing tokens to see comments, creation dates, and expiry.
+- **Create** a token with a comment describing its purpose and lifetime_seconds for expiry. Best practice: always set lifetime_seconds. A 90-day lifetime (7776000 seconds) is a reasonable default.
+- **Revoke** a token by ID to immediately invalidate it.
+
+## Workspace settings
+
+Read and update workspace-level configuration keys.
+
+Common settings:
+- `enableTokensConfig` -- enable/disable PAT creation for the workspace.
+- `maxTokenLifetimeDays` -- enforce a maximum token lifetime (0 means no limit).
+- `enableIpAccessLists` -- enable/disable IP access list enforcement.
+
+Get a setting to see its current value. Set a setting to change it. Some settings require workspace restart to take effect.
+
+## Destroying infrastructure
+
+Tear down Terraform-managed infrastructure.
+
+- **List** past Terraform runs to find the deployment you want to destroy.
+- **Get outputs** from a run to see what resources exist (workspace URLs, resource IDs).
+- **Destroy** a run to tear down all resources it created.
+
+ALWAYS ask for user confirmation before destroying. Show the user what will be destroyed (workspace name, resource group, VPC, etc.) and wait for explicit approval. Terraform destroy is irreversible -- deleted workspaces, storage accounts, and networking resources cannot be recovered.
+
+## Cross-links
+
+- For workspace creation and infrastructure provisioning, see **platform-provisioning**.
+- For permissions, groups, and access control, see **identity-governance**.
