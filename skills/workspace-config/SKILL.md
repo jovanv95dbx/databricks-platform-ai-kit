@@ -54,6 +54,26 @@ Restrict which IP addresses can reach the workspace API and UI.
 
 IP access lists must be enabled via workspace settings before they take effect. Creating a list does not automatically enable enforcement.
 
+**CRITICAL: Self-lockout prevention.** When creating an IP access list, ALWAYS include the deployer's current IP address. If the allow list is enabled without the deployer's IP, Terraform loses API access to the workspace and cannot fix the list — manual intervention via the Azure/AWS console is required.
+
+Pattern — auto-detect and include deployer IP:
+```hcl
+data "http" "deployer_ip" {
+  url = "https://ifconfig.me"
+}
+
+resource "databricks_ip_access_list" "allow_list" {
+  label     = "allow_in"
+  list_type = "ALLOW"
+  ip_addresses = concat(
+    var.allowed_ips,
+    ["${chomp(data.http.deployer_ip.response_body)}/32"]
+  )
+}
+```
+
+Recovery if locked out: disable IP access lists via the cloud console (Azure portal > Databricks workspace > Networking), fix the Terraform config, then re-apply.
+
 ## Token management
 
 Manage personal access tokens (PATs) for API authentication.

@@ -32,10 +32,20 @@ These are the recommended production design. Apply them unless the user explicit
 - **Single metastore per region** -- shared across all workspaces in that region. Never create multiple metastores in the same region.
 - **Self-managed metastore with own storage** -- deploy your own S3 bucket / ADLS container / GCS bucket. Never rely on vending machine for production.
 - **Per-environment catalogs with dedicated storage accounts/buckets** (MUST for multi-env). Each catalog (dev/stg/prod) gets its own storage account (ADLS) / S3 bucket / GCS bucket. This is not optional for production — it isolates blast radius, enables independent RBAC, and prevents cross-environment data leakage. Never share a single storage account across catalogs.
-- **Workspace binding** -- prod catalog only visible in prod workspace (`isolation_mode = ISOLATED` + workspace binding). Dev and stg can be `OPEN`.
+- **Workspace binding** -- prod catalog only visible in prod workspace. Set `isolation_mode = "ISOLATED"` on the catalog, then bind with `databricks_workspace_binding`:
+  ```hcl
+  resource "databricks_workspace_binding" "prod_catalog" {
+    securable_name = databricks_catalog.prod.name
+    securable_type = "catalog"
+    workspace_id   = var.prod_workspace_id
+    binding_type   = "BINDING_TYPE_READ_WRITE"
+  }
+  ```
+  Do NOT use raw API calls or `null_resource` with `local-exec` — the Terraform resource manages state and lifecycle correctly. Also works for `storage_credential` and `external_location` securable types. Dev and stg catalogs can remain `OPEN`.
 - **External locations over managed storage** -- own your data paths, control your storage layout. Use `MANAGED LOCATION` on catalogs pointing to external locations.
 - **DBFS is deprecated** -- never store production data in DBFS. All new data goes through external locations.
 - **Medallion schemas** -- bronze/silver/gold per catalog. This is the standard. Create them by default.
+- **Underscores in all names** — catalog, schema, and table names must use underscores, not hyphens (`fraud_poc` not `fraud-poc`). Hyphens require backtick escaping in SQL, confuse BI tools, and break hive_metastore compatibility. When deriving names from prefixes, use `replace(name, "-", "_")`.
 - **Account-level SCIM groups for all grants** -- no individual user grants, no workspace-local groups.
 - **Service principals for jobs** -- not user identities. Per-env SPs for CI/CD pipelines.
 - **Group-only grants** -- every UC permission goes to a group, never a user. Easier to audit, easier to rotate.

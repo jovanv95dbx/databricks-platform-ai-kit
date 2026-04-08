@@ -2,6 +2,48 @@
 
 Cloud-specific guidance for provisioning Databricks workspaces on AWS.
 
+## AWS Deployment Options
+
+Map the customer's answers from the intake questions to these deployment types:
+
+| Customer says... | Deployment type | Tier needed | Key resources |
+|-----------------|----------------|-------------|---------------|
+| "Quick POC, don't want to manage infrastructure" | Serverless workspace (no customer VPC) | Premium | No cloud resources needed — fully managed |
+| "POC but in our own account" | Classic with automated config | Premium | Databricks provisions VPC, S3, IAM in customer's account |
+| "Production, we want control over networking" | **Customer-managed VPC (BYOVPC)** — this is the default | Premium | Customer creates VPC, subnets, S3, IAM cross-account role |
+| "Production, backend traffic must stay private" | Backend Private Link | **Enterprise** | BYOVPC + VPC endpoints (REST API + relay) |
+| "Everything must be private, no public access at all" | Full Private Link | **Enterprise** | BYOVPC + VPC endpoints + transit VPC + Route 53 private zone |
+| "Maximum lockdown, prevent data exfiltration" | Full PL + data exfil protection | **Enterprise** | Full PL + restrictive firewall rules + SCC |
+
+**Default recommendation: Customer-managed VPC (BYOVPC)** with Secure Cluster Connectivity. This is the standard production setup. Escalate to private link only if the customer's answers indicate they need it.
+
+## AWS Permissions Pre-check
+
+Verify the customer has these permissions BEFORE writing any Terraform. If they don't, tell them exactly what's missing.
+
+**For new Databricks account:**
+- AWS Marketplace subscription permission (`AWSMarketplaceManageSubscriptions` policy minimum) — needed to subscribe to Databricks
+- Plus one of:
+  - AWS Admin privilege (simplest), OR
+  - S3 creation + VPC/networking creation + IAM creation privileges (least-privilege)
+
+**For existing Databricks account:**
+- Databricks Account Admin role (check at accounts.cloud.databricks.com)
+- Plus one of:
+  - AWS Admin privilege, OR
+  - S3 creation + VPC/networking creation + IAM creation privileges
+
+**For Private Link (in addition to above):**
+- VPC endpoint creation privileges
+- Route 53 hosted zone management (for full PL)
+- Enterprise tier on the Databricks account
+
+**For CMK (Customer Managed Keys):**
+- KMS key creation and management privileges
+- Enterprise tier on the Databricks account
+
+Ask: "Can you confirm you have admin access to both the AWS account and the Databricks account? If not, what access do you have — I'll tell you exactly what permissions are needed."
+
 ## Authentication
 
 ### Check current auth state

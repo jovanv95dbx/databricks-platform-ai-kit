@@ -31,31 +31,79 @@ Once you know the customer's cloud, read the corresponding cloud file (AZURE.md,
 
 ## Intake Questions
 
-Ask 3-5 questions max before deploying. Use sensible defaults for everything else.
+Ask these questions before deploying. Use plain language — the customer may not know Databricks-specific terms. Keep it conversational, not a checklist dump. Ask in logical groups, not all at once.
 
-**1. Cloud and region** (always ask)
-> "Which cloud (Azure / AWS / GCP) and what region?"
+**Round 1: Basics** (always ask)
 
-**2. Environment strategy** (ask if not specified)
-> "Single workspace, or multi-environment (dev / staging / prod)?"
+**1. Cloud and region**
+> "Which cloud are you on (Azure / AWS / GCP) and what region should the workspace go in?"
 
-**3. Unity Catalog** (always recommend, confirm approach)
-> "I'll set up Unity Catalog with a self-managed metastore (own storage). For multi-env I recommend per-environment catalogs, each with its own dedicated storage account/bucket — this gives blast-radius isolation. Single shared catalog or per-env?"
+**2. New or existing Databricks account?**
+> "Do you already have a Databricks account, or do we need to set one up from scratch?"
+- If new: note that they'll need marketplace subscription permissions (AWS) or resource provider registration (Azure)
+- If existing: ask for the Account ID and confirm they have account admin access
 
-**4. Groups and RBAC** (ask for production or multi-env)
-> "Want standard RBAC groups? I'd create: platform-admins, data-engineers, data-analysts, data-scientists."
+**3. Environment strategy**
+> "Is this a single workspace (e.g., for a POC or a small team), or do you need separate environments like dev, staging, and production?"
 
-**5. Tags** (ask once)
-> "Any required tags (e.g., owner, cost-center)? I'll propagate them to all resources."
+**4. What's the purpose?**
+> "Is this for a quick proof-of-concept, or a production setup that needs to be hardened?"
+- POC/evaluation → simpler setup, can use managed networking, skip some hardening
+- Production → VNet/VPC injection, proper IAM, encryption, monitoring
+
+**Round 2: Security and networking** (ask for production; skip or use defaults for POC)
+
+**5. Network isolation level** (use plain language, not Databricks terms)
+> "How locked down does the network need to be?"
+> - **Standard** (recommended default): Your workspace runs in your own network (VPC/VNet), compute nodes have no public IPs, all outbound traffic goes through NAT. Data stays in your network.
+> - **Private backend**: Same as standard, plus the communication between your compute and the Databricks control plane also stays private (no public internet). The web UI and API are still publicly accessible.
+> - **Fully private**: Everything is private — web UI, API, and backend. You'll need VPN or ExpressRoute/DirectConnect to access the workspace at all.
+> - **Fully private + data exfiltration protection**: Maximum lockdown. Prevents any data from leaving through the Databricks control plane. Requires Enterprise tier.
+
+**6. Encryption requirements**
+> "Do you need to manage your own encryption keys for data at rest? (If you're not sure, the default Databricks-managed encryption is fine for most use cases.)"
+- Yes → need Customer Managed Keys (CMK), requires Enterprise tier
+- No / not sure → use default encryption
+
+**7. IP restrictions**
+> "Do you want to restrict who can access the Databricks API and UI by IP address? For example, only allowing access from your corporate network?"
+- Account-level (applies to all workspaces)
+- Workspace-level (per-workspace)
+- Not needed
+
+**8. Compliance requirements**
+> "Are there any compliance frameworks you need to meet — like HIPAA, PCI-DSS, FedRAMP, or internal security policies? This affects which features and tier we need."
+- Yes → may need Enterprise tier, Enhanced Security and Compliance (ESC), specific network setup
+- No → standard setup
+
+**Round 3: Data governance** (always ask)
+
+**9. Unity Catalog**
+> "I'll set up Unity Catalog for data governance — this gives you access control, lineage tracking, and data discovery. For multi-env setups I'll create separate catalogs (dev/stg/prod), each with its own dedicated storage — this isolates environments so a mistake in dev can't affect production data. Sound good?"
+
+**10. Groups and RBAC** (ask for production or multi-env)
+> "Want me to set up standard access groups? I'd create: platform-admins (full control), data-engineers (build pipelines), data-analysts (read data), data-scientists (experiments). You can add users to these groups later."
+
+**11. Tags** (ask once)
+> "Any required tags for your cloud resources (e.g., owner, cost-center, environment)? I'll apply them to everything."
+
+**Pricing tier logic — determine automatically, don't ask directly:**
+- Need private link, CMK, IP ACLs, or compliance (ESC)? → **Enterprise** tier required (note: on Azure, the Terraform `sku` is still `"premium"` — "Enterprise" is an account-level licensing concept, not a Terraform SKU value. See AZURE.md.)
+- Otherwise → **Premium** is sufficient (still includes Unity Catalog)
+- Tell the customer: "Based on your requirements, you'll need Enterprise/Premium tier" — don't make them figure it out
+
+**Permissions pre-check — verify after intake, before deploying:**
+Once you know the cloud (read the cloud-specific file AWS.md/AZURE.md/GCP.md), verify the customer has the required permissions for their chosen deployment type. If they don't, tell them exactly what's missing before proceeding.
 
 **Sensible defaults -- do NOT ask, just do:**
 - CIDR ranges: auto-generate non-overlapping per environment
 - Storage: **one storage account/bucket per environment** for catalog data (e.g., st-myproject-catalog-dev, st-myproject-catalog-stg, st-myproject-catalog-prod) + one for metastore. Create external locations per bucket, catalogs with MANAGED LOCATION.
 - IAM role / access connector names: auto-generate
 - Schemas: create bronze, silver, gold (medallion) in each catalog
-- Network: VNet/VPC injection + SCC (no_public_ip = true)
+- Network: VNet/VPC injection + no public IP (Secure Cluster Connectivity) as the default
 - Metastore: self-managed with own storage (never rely on auto-provisioned/vending-machine metastore)
 - Service principals for CI/CD: create per-env if multi-environment
+- IaC: always use Terraform (recommend this as the deployment method)
 - See `unity-catalog-setup` skill (especially the cloud-specific file) for detailed storage patterns, external location hygiene, and role assignments
 
 ## Security Pre-checks
@@ -135,67 +183,117 @@ Run the verification workflow below: create 3 test notebooks, launch them in par
 
 ## Reference Sources
 
-**Official Databricks Terraform repos** — fetch at runtime for patterns and reference:
-- `https://github.com/databricks/terraform-databricks-sra` — production-hardened SRA patterns (hub-spoke, CMK, log delivery, exfil protection)
-- `https://github.com/databricks/terraform-databricks-examples` — wide coverage of workspace, UC, networking patterns per cloud
+**Official Databricks Terraform repos** — you MUST clone these before writing any Terraform:
+- `https://github.com/databricks/terraform-databricks-sra` — production-hardened SRA patterns (Enterprise features: CMK, Private Link, ESC, hub-spoke, log delivery, exfil protection)
+- `https://github.com/databricks/terraform-databricks-examples` — broad coverage of workspace types, UC, networking, VNet injection, Private Link, lakehouse patterns per cloud
 
-**How to use them:** Clone or fetch the relevant subdirectory. Read the Terraform files for provider config, resource patterns, and naming conventions. Then write fresh HCL tailored to the customer's requirements, baking in gotchas from the cloud-specific files (AZURE.md, AWS.md, GCP.md).
+**How to use them:**
+
+1. Clone both repos:
+   ```bash
+   git clone --depth 1 https://github.com/databricks/terraform-databricks-sra /tmp/tf-sra
+   git clone --depth 1 https://github.com/databricks/terraform-databricks-examples /tmp/tf-examples
+   ```
+2. Find the closest matching template(s) from the Template Index below
+3. Read the actual .tf files — pay attention to resource dependencies, access policies, provider config, and conditional logic
+4. Adapt the template to the customer's requirements — change variables, add/remove resources, adjust naming
+5. When combining features from multiple templates (e.g., VNet injection from examples + CMK from SRA), pull the specific resource blocks and merge them
+6. Bake in gotchas from the cloud-specific files (AZURE.md, AWS.md, GCP.md)
+
+**Why this is mandatory:** The SRA and examples repos contain production-tested patterns that handle edge cases (CMK DES access policies, NSG delegation, two-phase deploys, conditional firewall routing) that are easy to miss when writing from scratch. In stress testing, agents that skipped template fetching had a 3x higher failure rate than those that started from templates.
+
+Do NOT write Terraform from memory. Always start from reference code.
 
 ## Template Index
 
-These are the known Databricks Terraform patterns. Use them as reference when writing Terraform from scratch.
+These are the known Databricks Terraform patterns across both official repos. Always check the closest match before writing Terraform.
 
-### Azure Templates
+### Azure Templates — Examples Repo (`terraform-databricks-examples`)
 
-| Template | Description | Use Case |
-|----------|-------------|----------|
-| `azure-workspace-basic` | Resource group + ADLS Gen2 + workspace (managed VNet) | Getting started, dev/test |
-| `azure-workspace-vnet-injection` | Custom VNet + subnets + NSG + Secure Cluster Connectivity | Production with network isolation |
-| `azure-workspace-full` | VNet injection + Unity Catalog all-in-one | Full single-workspace production deploy |
-| `azure-workspace-privatelink` | VNet injection + private endpoints + private DNS zones | Full network isolation (no public UI/API) |
-| `azure-multi-workspace-privatelink` | 3 workspaces (dev/stg/prod) + private link + shared metastore + per-env catalogs + groups | Enterprise multi-environment setup |
-| `azure-unity-catalog` | Metastore + access connector + catalog + schemas | Add UC to an existing workspace |
+| Template | Path | Description | Use Case |
+|----------|------|-------------|----------|
+| `adb-vnet-injection` | `examples/adb-vnet-injection/` | Custom VNet + subnets + NSG + SCC | **Default for production** — start here for most deployments |
+| `adb-lakehouse` | `examples/adb-lakehouse/` + `modules/adb-lakehouse/` | VNet injection + Key Vault + UC + storage + network | Full lakehouse with CMK pattern |
+| `adb-unity-catalog-basic-demo` | `examples/adb-unity-catalog-basic-demo/` | Metastore + access connector + catalog + schemas | UC-only setup for existing workspace |
+| `adb-private-links` | `examples/adb-private-links/` | VNet injection + private endpoints + private DNS | Full network isolation |
+| `adb-with-private-link-standard` | `examples/adb-with-private-link-standard/` | Standard Private Link pattern | Simpler PL without exfil protection |
+| `adb-exfiltration-protection` | `examples/adb-exfiltration-protection/` | VNet + PL + NSG lockdown + UC | Maximum security lockdown |
+| `adb-data-storage-vnet-ncc-private-endpoint` | `examples/adb-data-storage-vnet-ncc-*` | NCC + private endpoint to storage | Serverless private connectivity to data |
 
-### AWS Templates
+### Azure Modules — SRA Repo (`terraform-databricks-sra`) — Enterprise/Compliance
 
-| Template | Description | Use Case |
-|----------|-------------|----------|
-| `aws-workspace-basic` | VPC + IAM cross-account role + S3 + MWS workspace | Getting started |
-| `aws-workspace-full` | Workspace + Unity Catalog + admin user in one deploy | Full single-workspace production deploy |
-| `aws-workspace-privatelink` | VPC + VPC endpoints (REST + relay) + private DNS + backend PL | Production with private backend connectivity |
-| `aws-workspace-full-privatelink` | Full PL (frontend + backend) + transit VPC + Route 53 DNS | Full network isolation |
-| `aws-unity-catalog` | Metastore + IAM UC role + S3 + catalog + schemas | Add UC to an existing workspace |
+Use these when the customer needs Enterprise features (CMK, Private Link, ESC, compliance profiles).
 
-### GCP Templates
+| Customer Need | SRA File | What It Contains |
+|--------------|----------|-----------------|
+| Workspace + VNet injection + SCC | `azure/tf/modules/workspace/main.tf` | Workspace resource with full custom_parameters, NSG rules, SCC |
+| CMK — Key Vault + keys | `azure/tf/modules/hub/keyvault.tf` | Key Vault (premium, purge-protected) + RSA-2048 keys for managed services and managed disks |
+| CMK — DES access policy | `azure/tf/modules/workspace/main.tf` (lines 114-140) | Post-workspace access policies for `storage_account_identity` and `managed_disk_identity` — **critical for managed disk CMK** |
+| Private Link endpoints | `azure/tf/modules/workspace/main.tf` | Private endpoints (ui_api + browser_auth) + DNS zone links |
+| Private DNS zones | `azure/tf/modules/hub/main.tf` | Shared DNS zone in hub resource group |
+| Hub-spoke VNet peering | `azure/tf/spoke.tf` | VNet peering between hub and spoke |
+| Unity Catalog metastore | `azure/tf/modules/hub/unitycatalog.tf` | Metastore + access connector + storage + role assignments |
+| Compliance Security Profile | `azure/tf/modules/workspace/main.tf` | `enhanced_security_compliance` block with CSP + ESM |
+| Firewall / UDR | `azure/tf/modules/hub/firewall.tf` | Conditional firewall creation + route table + UDR |
+| Account groups | `azure/tf/modules/hub/unitycatalog.tf` | `databricks_group` resources |
+| Log delivery | `azure/tf/modules/hub/log_delivery.tf` | Diagnostic settings + storage |
 
-| Template | Description | Use Case |
-|----------|-------------|----------|
-| `gcp-workspace-basic` | GCS bucket + workspace (GCP-managed VPC) | Getting started |
-| `gcp-workspace-byovpc` | Custom VPC + subnet + Cloud NAT + MWS workspace | Production with network control |
-| `gcp-unity-catalog` | GCS metastore + service account + catalog + schemas | Add UC to an existing workspace |
+### AWS Templates — Examples Repo
 
-## When to Use a Template vs. Write from Scratch
+| Template | Path | Description | Use Case |
+|----------|------|-------------|----------|
+| `aws-workspace-basic` | `examples/aws-workspace-basic/` | VPC + IAM + S3 + workspace | Getting started |
+| `aws-databricks-modular-privatelink` | `examples/aws-databricks-modular-privatelink/` | Modular VPC + Private Link | Production with PL |
+| `aws-databricks-uc` | `examples/aws-databricks-uc/` | UC setup for AWS | Add UC to existing workspace |
+| `aws-workspace-config` | `examples/aws-workspace-config/` | Cluster policies + IP ACLs | Day-2 workspace config |
+| `aws-exfiltration-protection` | `examples/aws-exfiltration-protection/` | VPC + firewall + PL | Maximum lockdown |
 
-**Use a template pattern directly when:**
+### GCP Templates — Examples Repo
+
+| Template | Path | Description | Use Case |
+|----------|------|-------------|----------|
+| `gcp-basic` | `examples/gcp-basic/` | GCS + workspace (managed VPC) | Getting started |
+| `gcp-byovpc` | `examples/gcp-byovpc/` | Custom VPC + subnet + Cloud NAT | Production with network control |
+
+## When to Use a Template vs. Combine Templates
+
+**ALWAYS clone both repos first**, regardless of approach.
+
+**Adapt a single template when:**
 - The request maps 1:1 to a known pattern above
-- Fetch the reference from the official repos, adapt variable values, deploy
+- Example: simple VNet injection → use `adb-vnet-injection` directly
 
-**Write from scratch when:**
-- The request combines multiple patterns (e.g., workspace + UC + custom networking)
-- The request modifies a pattern significantly (e.g., different subnet count, custom group structure)
-- The request is something the patterns don't cover (e.g., 5 workspaces with shared networking)
+**Combine templates when:**
+- The request needs features from multiple patterns
+- Example: VNet injection + CMK + UC → start from `adb-lakehouse` (examples repo), add DES access policy pattern from SRA `modules/workspace/main.tf`
+- Example: Private Link + compliance → start from `adb-private-links` (examples repo), add ESC block from SRA `modules/workspace/main.tf`
 
-**In both cases:** Read the reference repos + cloud-specific file first for naming conventions, provider auth, and gotchas.
+**Matching guide:**
+
+| Customer Need | Start From | Add From |
+|--------------|------------|----------|
+| Simple POC | `adb-vnet-injection` (examples) | — |
+| Production with UC | `adb-lakehouse` (examples) | — |
+| CMK encryption | `adb-lakehouse` (examples) | SRA `keyvault.tf` + `workspace/main.tf` DES policy |
+| Private Link | `adb-private-links` (examples) | SRA `workspace/main.tf` for PE patterns |
+| HIPAA / FedRAMP | SRA `azure/tf/` (full stack) | — |
+| Multi-env enterprise | SRA `azure/tf/` (full stack) | Examples `aws-workspace-config` for day-2 |
+| Exfiltration protection | `adb-exfiltration-protection` (examples) | SRA firewall patterns |
+
+**Write from scratch ONLY when:**
+- The request is something no template covers at all
+- Even then, reference both repos for provider config, naming conventions, and access policy patterns
 
 ## Verification Workflow
 
-After deployment completes, offer to verify the workspace is fully functional.
+**This is MANDATORY after every deployment. Do not skip. Do not ask — just run it.**
 
-If the customer agrees, create 3 test notebooks via the Databricks REST API and launch them as parallel one-time job runs:
+Create 3 test notebooks via the Databricks REST API and launch them as parallel one-time job runs:
 
 **Test 1: Classic cluster** (num_workers=1)
 - Write and read a Unity Catalog table
-- Compute: new_cluster with num_workers=1, latest LTS runtime
+- Compute: new_cluster with num_workers=1, latest LTS runtime, data_security_mode="USER_ISOLATION"
+- CRITICAL: data_security_mode is REQUIRED for classic clusters to access Unity Catalog. Without it, the cluster starts but all UC queries fail with permission errors.
 
 **Test 2: SQL warehouse** (PRO)
 - Write and read a Unity Catalog table
@@ -207,11 +305,13 @@ If the customer agrees, create 3 test notebooks via the Databricks REST API and 
 
 Each test notebook does:
 ```sql
-CREATE TABLE <catalog>.<schema>.platform_kit_test (id INT, msg STRING);
-INSERT INTO <catalog>.<schema>.platform_kit_test VALUES (1, 'provisioning verified');
-SELECT * FROM <catalog>.<schema>.platform_kit_test;
+CREATE TABLE `<catalog>`.`<schema>`.platform_kit_test (id INT, msg STRING);
+INSERT INTO `<catalog>`.`<schema>`.platform_kit_test VALUES (1, 'provisioning verified');
+SELECT * FROM `<catalog>`.`<schema>`.platform_kit_test;
 -- assert row count = 1
-DROP TABLE <catalog>.<schema>.platform_kit_test;
+DROP TABLE `<catalog>`.`<schema>`.platform_kit_test;
+-- NOTE: backtick quoting handles catalog/schema names with hyphens.
+-- Best practice: use underscores in names to avoid quoting issues entirely.
 ```
 
 Submit all 3 as one-time job runs (`POST /api/2.1/jobs/runs/submit`), poll for completion, and report pass/fail per compute type. If a test fails, include the error message for diagnosis.
@@ -229,6 +329,9 @@ Submit all 3 as one-time job runs (`POST /api/2.1/jobs/runs/submit`), poll for c
 | `has reached the limit for metastores in region` | Metastore limit hit | Reuse existing metastore or delete unused ones |
 | `Internal error` on workspace creation | Transient Databricks API error | Re-run terraform apply |
 | `INVALID_PARAMETER_VALUE` on catalog isolation_mode | Cannot set during creation | Create catalog first, then PATCH isolation_mode separately |
+| `PARSE_SYNTAX_ERROR` on catalog/schema reference | Catalog or schema name contains hyphens | Use underscores instead of hyphens. Wrap existing hyphenated names in backticks: \`my-catalog\` |
+| Classic cluster cannot see UC catalogs / `PERMISSION_DENIED` on UC table | Cluster running without data_security_mode | Set `data_security_mode = "USER_ISOLATION"` or `"SINGLE_USER"` on the cluster |
+| `Azure key vault key is not found to unwrap the encryption key` | Managed disk DES identity lacks Key Vault access | Grant `Get`, `UnwrapKey`, `WrapKey` to `managed_disk_identity` — see CMK section in AZURE.md |
 
 ## Cross-links
 
