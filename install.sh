@@ -2,12 +2,10 @@
 set -euo pipefail
 
 # Databricks Platform Kit v2 installer
-# Installs skills and optionally the MCP server for Claude Code
+# Installs skills for Claude Code
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_DIR="$SCRIPT_DIR/skills"
-MCP_SERVER_DIR="$SCRIPT_DIR/mcp-server"
-CORE_DIR="$SCRIPT_DIR/core"
 
 # Colors
 RED='\033[0;31m'
@@ -26,28 +24,24 @@ Usage: $(basename "$0") [OPTIONS]
 Install Databricks Platform Kit v2 for Claude Code.
 
 Options:
-  --skills-only    Install skills only (no MCP server). Claude writes
-                   Terraform from scratch using skill knowledge + shell.
   --global         Install to global Claude Code settings (~/.claude/)
                    instead of project-level (.claude/ in current directory).
   --force          Overwrite existing installation without prompting.
   -h, --help       Show this help message.
 
 Examples:
-  ./install.sh                    # Full install (skills + MCP server)
-  ./install.sh --skills-only      # Lightweight install
+  ./install.sh                    # Install skills to current project
   ./install.sh --global           # Install globally for all projects
+  ./install.sh --force            # Overwrite existing skills
 EOF
   exit 0
 }
 
-SKILLS_ONLY=false
 GLOBAL=false
 FORCE=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --skills-only) SKILLS_ONLY=true; shift ;;
     --global)      GLOBAL=true; shift ;;
     --force)       FORCE=true; shift ;;
     -h|--help)     usage ;;
@@ -63,7 +57,6 @@ else
 fi
 
 CLAUDE_SKILLS_DIR="$CLAUDE_DIR/skills"
-CLAUDE_SETTINGS="$CLAUDE_DIR/settings.json"
 
 # --- Skills Installation ---
 
@@ -84,88 +77,22 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   info "  Installed skill: $skill_name"
 done
 
-# --- MCP Server Installation ---
-
-if ! $SKILLS_ONLY; then
-  info "Installing MCP server..."
-
-  # Check Python
-  PYTHON=""
-  for cmd in python3 python; do
-    if command -v "$cmd" &>/dev/null; then
-      PYTHON="$cmd"
-      break
-    fi
-  done
-  [[ -z "$PYTHON" ]] && error "Python 3 is required. Install it and try again."
-
-  # Install core library
-  info "  Installing core library..."
-  (cd "$CORE_DIR" && $PYTHON -m pip install -e ".[all]" --quiet 2>&1 | tail -1)
-
-  # Install MCP server
-  info "  Installing MCP server..."
-  (cd "$MCP_SERVER_DIR" && $PYTHON -m pip install -e . --quiet 2>&1 | tail -1)
-
-  # Register MCP server in Claude Code settings
-  info "  Registering MCP server in Claude Code settings..."
-  mkdir -p "$CLAUDE_DIR"
-
-  if [[ -f "$CLAUDE_SETTINGS" ]]; then
-    $PYTHON -c "
-import json, sys
-settings_path = '$CLAUDE_SETTINGS'
-with open(settings_path) as f:
-    settings = json.load(f)
-mcp = settings.setdefault('mcpServers', {})
-mcp['databricks-platform'] = {
-    'command': '$PYTHON',
-    'args': ['-m', 'databricks_platform_mcp'],
-    'env': {}
-}
-with open(settings_path, 'w') as f:
-    json.dump(settings, f, indent=2)
-"
-  else
-    cat > "$CLAUDE_SETTINGS" <<SETTINGS
-{
-  "mcpServers": {
-    "databricks-platform": {
-      "command": "$PYTHON",
-      "args": ["-m", "databricks_platform_mcp"],
-      "env": {}
-    }
-  }
-}
-SETTINGS
-  fi
-
-  info "  MCP server registered."
-fi
-
 # --- Verify ---
 
 info ""
 info "Installation complete!"
 info ""
-if $SKILLS_ONLY; then
-  info "Skills installed to: $CLAUDE_SKILLS_DIR"
-  info ""
-  info "  5 skills installed:"
-  info "    platform-provisioning  — Create workspaces + deploy infrastructure"
-  info "    unity-catalog-setup    — Metastore, catalogs, schemas, governance"
-  info "    identity-governance    — Groups, users, SPs, RBAC"
-  info "    workspace-config       — SQL warehouses, policies, secrets, tokens"
-  info "    private-networking     — Private link, hub-spoke, NCC patterns"
-  info ""
-  info "Claude can now provision Databricks infrastructure using Terraform"
-  info "via shell commands. No MCP server needed."
-else
-  info "Skills installed to: $CLAUDE_SKILLS_DIR"
-  info "MCP server registered in: $CLAUDE_SETTINGS"
-  info ""
-  info "Restart Claude Code to activate the MCP server."
-fi
+info "Skills installed to: $CLAUDE_SKILLS_DIR"
+info ""
+info "  5 skills installed:"
+info "    platform-provisioning  — Create workspaces + deploy infrastructure"
+info "    unity-catalog-setup    — Metastore, catalogs, schemas, governance"
+info "    identity-governance    — Groups, users, SPs, RBAC"
+info "    workspace-config       — SQL warehouses, policies, secrets, tokens"
+info "    private-networking     — Private link, hub-spoke, NCC patterns"
+info ""
+info "Claude can now provision Databricks infrastructure using Terraform"
+info "via shell commands."
 
 # Check for Terraform
 if ! command -v terraform &>/dev/null; then

@@ -31,21 +31,11 @@ skills/                              # 5 focused skills (the main product)
   private-networking/                #   Private link, hub-spoke, NCC
     SKILL.md + AZURE.md / AWS.md
 
-core/                                # Shared Python library
-mcp-server/                          # Optional MCP tools for enhanced UX
 ```
 
-**Works with or without the MCP server.** The skills teach Claude the patterns and gotchas. If the MCP server is running, Claude gets credential management and run tracking. If not, Claude uses `az login` + `terraform` via shell and it still works.
+Claude uses `az login` / `aws configure` / `gcloud auth login` + `terraform` via shell. No Python dependencies, no MCP server — just skills.
 
 ## Install
-
-### Skills only (lightweight — Claude writes everything from scratch)
-
-```bash
-./install.sh --skills-only
-```
-
-### Full install (skills + MCP server with credential management and run tracking)
 
 ```bash
 ./install.sh
