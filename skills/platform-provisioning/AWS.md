@@ -60,6 +60,18 @@ cat ~/.databrickscfg 2>/dev/null  # check for DEFAULT profile conflicts
 - **Databricks Account ID**: From the Databricks accounts console (accounts.cloud.databricks.com). Ask the customer if not known.
 - **Databricks account-level credentials**: Either a Databricks account admin user (email/password) or a service principal with account admin role. Needed for the Databricks provider to create MWS workspaces.
 
+### CRITICAL: Environment variable overrides
+
+Run `env | grep -i DATABRICKS` BEFORE any terraform command. If `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, or `DATABRICKS_ACCOUNT_ID` are set, they **silently override** all Terraform provider config (profile, host, account_id). This is the #1 cause of "wrong account" or "invalid_client" errors on machines that also have Azure Databricks configured. **Fix:** Prefix every terraform command with `env -u DATABRICKS_CLIENT_ID -u DATABRICKS_CLIENT_SECRET -u DATABRICKS_ACCOUNT_ID` or unset them in your shell.
+
+### CRITICAL: Databricks CLI obfuscated secrets (`dose` prefix)
+
+The Databricks CLI v2 obfuscates M2M OAuth secrets in `~/.databrickscfg` with a `dose` prefix. These obfuscated values **cannot be used by the Terraform provider**. If you see `client_secret = dose...` in the config, do NOT copy it into Terraform variables. For account-level provider, use a U2M profile (`databricks auth login --host https://accounts.cloud.databricks.com --account-id <id>`). For workspace-level provider, use M2M with the **original** (non-obfuscated) client_id/client_secret via explicit env vars, or run `databricks auth login --host <workspace-url>` for U2M.
+
+### CRITICAL: Do NOT use `token {}` block in `databricks_mws_workspaces`
+
+The `token {}` block that auto-generates a PAT after workspace creation only works with M2M OAuth auth. It fails with U2M auth ("Authentication failed"). Instead, create the workspace WITHOUT `token {}` and use a separate workspace provider with profile-based auth via `databricks auth login --host <workspace-url>`.
+
 ### Provider configuration
 
 AWS templates use two providers:
@@ -76,19 +88,60 @@ provider "databricks" {
 }
 ```
 
-After workspace creation, a second Databricks provider targets the workspace:
+After workspace creation, a second Databricks provider targets the workspace. Do NOT use the `token {}` pattern — use profile-based auth instead:
 
 ```hcl
 provider "databricks" {
-  alias = "workspace"
-  host  = databricks_mws_workspaces.this.workspace_url
-  token = databricks_mws_workspaces.this.token[0].token_value
+  alias   = "workspace"
+  host    = databricks_mws_workspaces.this.workspace_url
+  profile = "${var.prefix}-workspace"  # created via: databricks auth login --host <url>
 }
 ```
 
 **GOTCHA: Azure SP credentials do NOT work on AWS.** Azure (accounts.azuredatabricks.net) and AWS (accounts.cloud.databricks.com) are completely separate account consoles with separate service principals. Always verify which account console credentials are being used.
 
 ## Gotchas
+
+### CRITICAL: S3 bucket policy for Databricks E2 control plane
+
+The workspace root S3 bucket MUST have a bucket policy granting the Databricks E2 control plane account (`414351767826`) direct access. The cross-account IAM role alone is NOT sufficient. Without this, workspace creation fails with: `Failed storage configuration validation checks: List, Put, PutWithBucketOwnerFullControl, Delete -- Access Denied`
+
+```hcl
+resource "aws_s3_bucket_policy" "root" {
+  bucket = aws_s3_bucket.root.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DatabricksE2Access"
+      Effect    = "Allow"
+      Principal = { AWS = "arn:aws:iam::414351767826:root" }
+      Action    = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+                   "s3:ListBucket", "s3:GetBucketLocation", "s3:PutObjectAcl"]
+      Resource  = [aws_s3_bucket.root.arn, "${aws_s3_bucket.root.arn}/*"]
+    }]
+  })
+}
+```
+
+### CRITICAL: S3 bucket ownership must be BucketOwnerPreferred
+
+New S3 buckets default to `BucketOwnerEnforced` (no ACLs). Databricks validation tests `PutWithBucketOwnerFullControl`, which requires ACLs. Set `object_ownership = "BucketOwnerPreferred"` on ALL S3 buckets (root, metastore, catalog).
+
+### Supported AWS regions
+
+Not all AWS regions are supported by Databricks. Notable unsupported: **eu-north-1 (Stockholm)**. If requested, recommend **eu-west-1 (Ireland)** as closest supported EU region. Always verify region support before writing Terraform.
+
+### KMS key policy for EC2/EBS encryption
+
+If using KMS CMK for workspace encryption, the key policy must also grant EC2/EBS permissions for cluster volume encryption. Add a statement allowing the account root principal `kms:CreateGrant`, `kms:Decrypt`, `kms:DescribeKey`, `kms:Encrypt`, `kms:GenerateDataKey*`, `kms:ReEncrypt*` with condition `kms:CallerAccount` = your account ID.
+
+### Workspace import limitation
+
+`databricks_mws_workspaces` cannot be imported after creation if Terraform state is lost. If the workspace exists but is missing from state, reference it by URL/ID in locals. Use `terraform state rm` to clean up stale references.
+
+### Identity federation disables permission assignment API
+
+Workspaces with identity federation enabled do NOT support `databricks_mws_permission_assignment`. Account-level groups auto-sync — no explicit assignment needed. If you get "APIs not available", remove the permission assignment resources.
 
 ### IAM propagation delay
 

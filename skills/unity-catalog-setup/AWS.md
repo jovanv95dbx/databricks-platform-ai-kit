@@ -145,3 +145,9 @@ Without `USE_CATALOG` + `USE_SCHEMA` + `SELECT` on `account users`, catalogs do 
 **AWS session token expiry.** AWS STS session tokens (from SSO or AssumeRole) expire after 1-12 hours. Unlike Azure CLI which auto-refreshes, expired AWS tokens cause immediate failures. Re-export fresh credentials before long Terraform runs.
 
 **Account-level groups on AWS.** Create groups via SCIM API at `accounts.cloud.databricks.com/api/2.0/accounts/{id}/scim/v2/Groups`. These are visible across all workspaces via UC identity federation. Grant catalog/schema permissions using these group names as principals.
+
+**Classic cluster UC access requires data_security_mode.** Classic clusters MUST have `data_security_mode` set to `SINGLE_USER` or `USER_ISOLATION` to access Unity Catalog tables. Without this, all UC queries return `[UC_NOT_ENABLED]`. This applies to verification tests and production clusters alike.
+
+**First classic cluster on a new workspace may hang.** The first classic cluster with `USER_ISOLATION` on a brand-new workspace can hang 30-40 minutes during initial UC metadata resolution. This is transient — cancel, wait 5 minutes, retry. Or use `SINGLE_USER` mode which resolves faster.
+
+**S3 bucket ownership on UC buckets.** All S3 buckets used by Unity Catalog (metastore root, catalog storage) must use `BucketOwnerPreferred` ownership — not the default `BucketOwnerEnforced`. Without this, Databricks storage validation fails with `PutWithBucketOwnerFullControl` errors.

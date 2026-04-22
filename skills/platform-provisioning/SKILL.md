@@ -292,16 +292,20 @@ Create 3 test notebooks via the Databricks REST API and launch them as parallel 
 
 **Test 1: Classic cluster** (num_workers=1)
 - Write and read a Unity Catalog table
-- Compute: new_cluster with num_workers=1, latest LTS runtime, data_security_mode="USER_ISOLATION"
-- CRITICAL: data_security_mode is REQUIRED for classic clusters to access Unity Catalog. Without it, the cluster starts but all UC queries fail with permission errors.
+- Compute: new_cluster with num_workers=1, latest LTS runtime, data_security_mode="USER_ISOLATION" (or "SINGLE_USER")
+- CRITICAL: data_security_mode is REQUIRED for classic clusters to access Unity Catalog. Without it, the cluster starts but all UC queries fail with `[UC_NOT_ENABLED]`.
+- **AWS:** Some node types (m5.large, etc.) require `ebs_volume_count >= 1`. Include EBS config in the cluster spec.
+- **Note:** First classic cluster on a brand-new workspace may take 10-15 min to start (JVM warmup + UC metadata resolution). If it hangs >30 min with USER_ISOLATION, cancel and retry with SINGLE_USER — this is a known transient issue on fresh workspaces.
 
 **Test 2: SQL warehouse** (PRO)
 - Write and read a Unity Catalog table
 - Compute: create or use existing SQL warehouse, PRO type
+- **Alternative:** Use the Statement Execution API (`POST /api/2.0/sql/statements`) directly against a running warehouse. Faster and avoids notebook creation overhead.
 
 **Test 3: Serverless notebook**
 - Write and read a Unity Catalog table
 - Compute: serverless
+- **AWS:** Serverless job submission requires the multi-task `tasks` array format with `environment_key`, not the single-task format.
 
 Each test notebook does:
 ```sql
@@ -332,6 +336,11 @@ Submit all 3 as one-time job runs (`POST /api/2.1/jobs/runs/submit`), poll for c
 | `PARSE_SYNTAX_ERROR` on catalog/schema reference | Catalog or schema name contains hyphens | Use underscores instead of hyphens. Wrap existing hyphenated names in backticks: \`my-catalog\` |
 | Classic cluster cannot see UC catalogs / `PERMISSION_DENIED` on UC table | Cluster running without data_security_mode | Set `data_security_mode = "USER_ISOLATION"` or `"SINGLE_USER"` on the cluster |
 | `Azure key vault key is not found to unwrap the encryption key` | Managed disk DES identity lacks Key Vault access | Grant `Get`, `UnwrapKey`, `WrapKey` to `managed_disk_identity` — see CMK section in AZURE.md |
+| `Failed storage configuration validation checks: Access Denied` (AWS) | S3 bucket missing policy for Databricks E2 account | Add bucket policy granting `arn:aws:iam::414351767826:root` S3 access + set `BucketOwnerPreferred` |
+| `Authentication failed` on workspace token creation (AWS) | U2M auth cannot create PATs via MWS API | Remove `token {}` block, use profile-based workspace auth |
+| `invalid_client` on Databricks OAuth (AWS) | SP secret obfuscated (`dose` prefix) or expired | Use U2M auth (`databricks auth login`) or original non-obfuscated SP secret |
+| `APIs not available` on permission assignment (AWS) | Identity federation enabled on workspace | Remove `databricks_mws_permission_assignment` — groups auto-sync |
+| Terraform state lock (`Error acquiring the state lock`) | Concurrent terraform process or stale lock | Wait for other process, or delete `.terraform.tfstate.lock.info` if stale |
 
 ## Cross-links
 

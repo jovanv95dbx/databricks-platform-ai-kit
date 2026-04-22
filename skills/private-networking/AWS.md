@@ -80,9 +80,9 @@ Use Network Connectivity Configuration when serverless SQL warehouses need to re
 
 - **PL subnet needs its own route table.** The Private Link subnet route table should have local routes only -- no NAT Gateway, no IGW. Adding default routes to this subnet breaks VPC endpoint connectivity.
 
-- **VPC endpoint service names are region-specific.** Each AWS region has different service names for the REST API and relay endpoints. Always look up the correct names for your region in the Databricks documentation.
+- **VPC endpoint service names are region-specific.** Each AWS region has different service names for the REST API and relay endpoints. Do NOT hardcode service names. Query them at runtime via the Databricks account API: `GET /api/2.0/accounts/{account_id}/vpc-endpoints` to see existing endpoints, or look up the correct names for your region in the Databricks documentation. Wrong service names cause workspace creation to succeed but clusters to fail silently.
 
-- **PAS is immutable.** You cannot modify a Private Access Settings object after creation. Create a new one and update the workspace reference to switch.
+- **PAS is immutable.** You cannot modify a Private Access Settings object after creation. To change `public_access_enabled`, use this pattern: (1) Create a new PAS with the desired setting, (2) Update the workspace to reference the new PAS, (3) Wait 1-2 min for re-provisioning, (4) Delete the old PAS. This is needed when temporarily enabling public access for testing in a full private link deployment.
 
 - **Route 53 zone scope.** The private hosted zone MUST be scoped to the specific workspace FQDN, not the entire `cloud.databricks.com` domain. Overly broad zones break OAuth flows to `accounts.cloud.databricks.com`.
 

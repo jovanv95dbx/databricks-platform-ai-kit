@@ -91,7 +91,7 @@ Assign groups and users to specific workspaces with a permission level (USER or 
 - **Assign** a principal (group or user) with USER or ADMIN permission.
 - **Unassign** to revoke workspace access.
 
-On Azure with UC identity federation, `databricks_mws_permission_assignment` does not work. Account-level groups are visible in workspaces automatically via identity federation -- no explicit assignment needed. This Terraform resource is AWS/GCP only.
+On workspaces with identity federation enabled, `databricks_mws_permission_assignment` does not work — the API returns "APIs not available." Account-level groups are visible in workspaces automatically via identity federation — no explicit assignment needed. This affects Azure (always) and many newer AWS/GCP workspaces. Check if your workspace has identity federation enabled before adding permission assignment resources. If you get the error, simply remove them.
 
 ## Workflow: UC grants
 
@@ -108,7 +108,7 @@ Use modern privilege names only. Legacy names (e.g., USAGE instead of USE_CATALO
 ## Error handling
 
 - **"SCIM conflict"** -- the user or group already exists at the account level. List first, then update the existing object instead of creating a new one.
-- **"Group with name X already exists"** -- account-level groups persist across deployments. Use Terraform data sources to reference existing groups, or run `terraform import` to bring them into state.
+- **"Group with name X already exists"** -- account-level groups persist across deployments AND workspace deletions. **Always list existing groups first** via `GET /api/2.0/accounts/{id}/scim/v2/Groups` before creating. If the group exists, use `data.databricks_group` (data source) instead of `databricks_group` (resource) in Terraform. Alternatively, delete the stale group via SCIM API if it's from a previous deployment. Do NOT blindly create groups without checking — SCIM conflicts halt the entire terraform apply.
 - **"permissions are [...] but have to be [...]"** -- you used a legacy privilege name. Switch to modern names: USE_CATALOG, USE_SCHEMA, CREATE_TABLE, CREATE_FUNCTION, CREATE_SCHEMA, SELECT, MODIFY.
 
 ## Cross-links

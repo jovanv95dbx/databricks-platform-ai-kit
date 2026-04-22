@@ -1,4 +1,4 @@
-# Databricks Platform Kit v2
+# Databricks Platform Kit
 
 **AI-powered Databricks platform engineering.** Provision workspaces, configure Unity Catalog, set up networking, manage groups and permissions — all through natural language with Claude.
 
