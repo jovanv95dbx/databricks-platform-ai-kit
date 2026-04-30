@@ -16,6 +16,10 @@ description: "Provision and test Databricks workspaces. Use when the user asks t
 - **Full spec given** (cloud, region, network tier, UC, groups all specified): Just deploy. Do not second-guess a complete specification.
 - **Dangerous or irreversible actions** (terraform destroy, disabling public access, deleting metastore): Always confirm explicitly before executing. State what will be destroyed.
 
+## Resource naming convention
+
+Examples in this skill use **`<prefix>`** as a placeholder for a customer-specific identifier (workspace, profile, storage). Substitute it with a unique value derived from the conversation — customer name, project name, or workspace name. **Never use `<prefix>` literally**, and never reuse a prefix across deployments in the same cloud account (cloud resource names like S3 buckets, Azure storage accounts, and Databricks workspaces are unique). See `unity-catalog-setup/SKILL.md` for the full convention.
+
 ## Overview
 
 Provision Databricks workspaces end-to-end. Claude writes Terraform from scratch based on the customer's requirements, informed by reference templates and accumulated production gotchas.
@@ -97,7 +101,7 @@ Once you know the cloud (read the cloud-specific file AWS.md/AZURE.md/GCP.md), v
 
 **Sensible defaults -- do NOT ask, just do:**
 - CIDR ranges: auto-generate non-overlapping per environment
-- Storage: **one storage account/bucket per environment** for catalog data (e.g., st-myproject-catalog-dev, st-myproject-catalog-stg, st-myproject-catalog-prod) + one for metastore. Create external locations per bucket, catalogs with MANAGED LOCATION.
+- Storage: **one storage account/bucket per environment** for catalog data (e.g., st-<prefix>-catalog-dev, st-<prefix>-catalog-stg, st-<prefix>-catalog-prod) + one for metastore. Create external locations per bucket, catalogs with MANAGED LOCATION.
 - IAM role / access connector names: auto-generate
 - Schemas: create bronze, silver, gold (medallion) in each catalog
 - Network: VNet/VPC injection + no public IP (Secure Cluster Connectivity) as the default
@@ -163,12 +167,12 @@ Display prominently:
 # WORKSPACE LEVEL — Azure (westeurope)
 # Scope: workspace operations
 # Auth: az-cli
-[myproject-dev]
+[<prefix>-dev]
 host      = https://adb-1234567890.12.azuredatabricks.net
 auth_type = azure-cli
 
 # WORKSPACE LEVEL — Azure (westeurope)
-[myproject-prod]
+[<prefix>-prod]
 host      = https://adb-0987654321.12.azuredatabricks.net
 auth_type = azure-cli
 ```

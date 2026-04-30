@@ -7,6 +7,18 @@ description: "Set up Unity Catalog on Databricks workspaces. Use when the user a
 
 Configure Unity Catalog end-to-end: metastores, storage credentials, external locations, catalogs, schemas, and grants.
 
+## Resource naming convention
+
+All resource names in this skill (and its cloud-specific files) use **`<prefix>`** as a placeholder. Substitute it with a unique value derived from the conversation — customer name, project name, or workspace name. Examples:
+
+- `<prefix>-catalog-dev` → `acme-catalog-dev`
+- `st<prefix>catalogdev` (Azure storage account, alphanumeric only) → `stacmecatalogdev`
+- `gs://<prefix>-catalog-dev` → `gs://acme-catalog-dev`
+
+**Never use `<prefix>` literally** — `<` and `>` are not valid in bash, SQL, HCL, or cloud resource names; literal use will fail loudly. **Never reuse a prefix across deployments in the same cloud account** — S3 / GCS bucket names and Azure storage account names are globally unique, and Databricks workspace names are unique per account.
+
+If the customer hasn't provided a prefix, derive one from their workspace name or company name. Confirm it back to them before deploying.
+
 ## How to Interact with the Customer
 
 Apply MODERATE pushback. Ask clarifying questions when the request is ambiguous, but execute immediately when requirements are clear.
@@ -92,7 +104,7 @@ PUT /api/2.1/accounts/{account_id}/workspaces/{workspace_id}/metastore
 **Step 4: Create catalogs + schemas (workspace API)**
 Databricks auto-creates a `main` catalog on metastore assignment. Use a different name for your catalogs.
 ```sql
-CREATE CATALOG dev MANAGED LOCATION 's3://myproject-catalog-dev/';
+CREATE CATALOG dev MANAGED LOCATION 's3://<prefix>-catalog-dev/';
 CREATE SCHEMA dev.bronze;
 CREATE SCHEMA dev.silver;
 CREATE SCHEMA dev.gold;
@@ -107,7 +119,7 @@ GRANT USE_SCHEMA, SELECT ON SCHEMA dev.gold TO `data-analysts`;
 
 ## External Location Hygiene
 
-- **One storage account/bucket per environment.** `myproject-catalog-dev`, `myproject-catalog-stg`, `myproject-catalog-prod`.
+- **One storage account/bucket per environment.** `<prefix>-catalog-dev`, `<prefix>-catalog-stg`, `<prefix>-catalog-prod`.
 - **One storage credential per cloud identity.** Reuse the same credential across catalogs where the same IAM role / access connector / SA has access to all buckets.
 - **External locations: one per bucket/container.** Each maps to a single storage path.
 - **Use `CREATE CATALOG ... MANAGED LOCATION` (SQL)** -- NOT `storage_root` in the REST API. `MANAGED LOCATION` correctly ties the catalog to the external location path. `storage_root` bypasses the binding.

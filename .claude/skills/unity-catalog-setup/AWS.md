@@ -81,9 +81,9 @@ This is the proven production pattern for multi-env catalogs on AWS:
 
 **1. One S3 bucket per environment:**
 ```bash
-aws s3api create-bucket --bucket myproject-catalog-dev --region us-east-1
-aws s3api create-bucket --bucket myproject-catalog-stg --region us-east-1
-aws s3api create-bucket --bucket myproject-catalog-prod --region us-east-1
+aws s3api create-bucket --bucket <prefix>-catalog-dev --region us-east-1
+aws s3api create-bucket --bucket <prefix>-catalog-stg --region us-east-1
+aws s3api create-bucket --bucket <prefix>-catalog-prod --region us-east-1
 ```
 
 **2. IAM policy on the UC role covering all catalog buckets:**
@@ -94,9 +94,9 @@ One policy, one role. No separate roles needed per catalog.
     "Effect": "Allow",
     "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"],
     "Resource": [
-      "arn:aws:s3:::myproject-catalog-dev", "arn:aws:s3:::myproject-catalog-dev/*",
-      "arn:aws:s3:::myproject-catalog-stg", "arn:aws:s3:::myproject-catalog-stg/*",
-      "arn:aws:s3:::myproject-catalog-prod", "arn:aws:s3:::myproject-catalog-prod/*"
+      "arn:aws:s3:::<prefix>-catalog-dev", "arn:aws:s3:::<prefix>-catalog-dev/*",
+      "arn:aws:s3:::<prefix>-catalog-stg", "arn:aws:s3:::<prefix>-catalog-stg/*",
+      "arn:aws:s3:::<prefix>-catalog-prod", "arn:aws:s3:::<prefix>-catalog-prod/*"
     ]
   }]
 }
@@ -106,13 +106,13 @@ One policy, one role. No separate roles needed per catalog.
 References the UC IAM role. Reuse across all catalogs.
 
 **4. External locations per bucket:**
-One external location per environment bucket: `s3://myproject-catalog-dev/`, etc.
+One external location per environment bucket: `s3://<prefix>-catalog-dev/`, etc.
 
 **5. Catalogs with `MANAGED LOCATION`:**
 ```sql
-CREATE CATALOG dev MANAGED LOCATION 's3://myproject-catalog-dev/';
-CREATE CATALOG stg MANAGED LOCATION 's3://myproject-catalog-stg/';
-CREATE CATALOG prod MANAGED LOCATION 's3://myproject-catalog-prod/';
+CREATE CATALOG dev MANAGED LOCATION 's3://<prefix>-catalog-dev/';
+CREATE CATALOG stg MANAGED LOCATION 's3://<prefix>-catalog-stg/';
+CREATE CATALOG prod MANAGED LOCATION 's3://<prefix>-catalog-prod/';
 ```
 
 Use `CREATE CATALOG ... MANAGED LOCATION` (SQL), NOT `storage_root` in the REST API. `MANAGED LOCATION` correctly ties the catalog to the external location path. Data lands in `s3://bucket/__unitystorage/catalogs/<uuid>/`.

@@ -34,9 +34,9 @@ abfss://<container>@<storage_account>.dfs.core.windows.net/
 
 **Per-env catalog storage:**
 ```
-abfss://dev@stmyprojectcatalogdev.dfs.core.windows.net/
-abfss://stg@stmyprojectcatalogstg.dfs.core.windows.net/
-abfss://prod@stmyprojectcatalogprod.dfs.core.windows.net/
+abfss://dev@st<prefix>catalogdev.dfs.core.windows.net/
+abfss://stg@st<prefix>catalogstg.dfs.core.windows.net/
+abfss://prod@st<prefix>catalogprod.dfs.core.windows.net/
 ```
 
 ## Required Role Assignments

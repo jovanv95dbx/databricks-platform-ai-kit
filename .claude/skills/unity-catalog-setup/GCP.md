@@ -22,9 +22,9 @@ gs://<bucket-name>
 
 **Per-env catalog storage:**
 ```
-gs://myproject-catalog-dev/
-gs://myproject-catalog-stg/
-gs://myproject-catalog-prod/
+gs://<prefix>-catalog-dev/
+gs://<prefix>-catalog-stg/
+gs://<prefix>-catalog-prod/
 ```
 
 ## Auto-Generated Service Account
