@@ -35,8 +35,6 @@ The kit relies entirely on credentials the customer's developers already have on
 
 **Service-account / M2M environments**: the kit supports M2M OAuth and workload identity federation. The skills are unchanged — only the customer's `~/.databrickscfg` profile differs.
 
-**Air-gapped environments**: route Claude Code through Bedrock-in-VPC or Vertex-in-VPC. The kit's local execution path is unchanged. See "Model deployment options" below.
-
 ## What ships in the kit to protect credentials
 
 ### 1. Skill discipline (`.claude/skills/`)
@@ -81,18 +79,6 @@ Skills enforce the following Terraform conventions:
 - **Sensitive outputs marked.** Outputs containing tokens are declared `sensitive = true`.
 - **Remote state recommended.** Skills recommend S3 + KMS, AzureRM, or GCS + CMEK. Local state is gitignored (`.terraform/`, `*.tfstate*`).
 - **Plan output review.** When plan output contains sensitive values, the skill summarizes rather than streams the full plan back through the model.
-
-## Model deployment options
-
-Claude Code can run against three model deployments. The kit works identically with all three.
-
-| Deployment | Where prompts go | When to use |
-|---|---|---|
-| Anthropic API (default) | Anthropic-managed infrastructure (SOC 2 Type II, ISO 27001, ISO 42001, HIPAA-eligible via Bedrock). See [trust.anthropic.com](https://trust.anthropic.com). | Default. Most customers. |
-| Amazon Bedrock | The customer's own AWS VPC with KMS-managed keys. | Regulated workloads (HIPAA, FedRAMP), data-residency requirements, customers requiring no third-party model access. |
-| Google Vertex AI | The customer's own GCP project. | GCP-aligned regulated workloads. |
-
-The kit does not change behavior based on deployment. Skills, hooks, and the customer's local credential flow are identical.
 
 ## Limitations
 
