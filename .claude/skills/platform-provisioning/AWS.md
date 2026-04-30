@@ -51,7 +51,7 @@ Ask: "Can you confirm you have admin access to both the AWS account and the Data
 ```bash
 aws sts get-caller-identity  # account ID, IAM user/role ARN
 env | grep -i DATABRICKS  # check for conflicting env vars
-cat ~/.databrickscfg 2>/dev/null  # check for DEFAULT profile conflicts
+databricks auth profiles 2>/dev/null  # list profiles + DEFAULT, never echoes secret values
 ```
 
 ### Required credentials
