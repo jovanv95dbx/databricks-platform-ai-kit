@@ -27,8 +27,8 @@ Thumbs.db
 *.key
 .env
 
-# Claude Code (created by install.sh and user config)
-.claude/skills/
+# Claude Code (per-user local config; skills are tracked in .claude/skills/)
+.claude/settings.local.json
 
 # Deployments (created at runtime by Claude per customer)
 deployments/

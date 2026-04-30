@@ -18,7 +18,7 @@ Claude writes the Terraform and SDK calls from scratch based on your specific re
 ## Architecture
 
 ```
-skills/                              # 5 focused skills (the main product)
+.claude/skills/                      # 5 focused skills (the main product)
   platform-provisioning/             #   Workspace creation + deploy
     SKILL.md                         #     Shared workflow + interaction guidance
     AZURE.md / AWS.md / GCP.md       #     Cloud-specific patterns + gotchas
@@ -35,11 +35,17 @@ skills/                              # 5 focused skills (the main product)
 
 Claude uses `az login` / `aws configure` / `gcloud auth login` + `terraform` via shell. No Python dependencies, no MCP server — just skills.
 
-## Install
+## Quick start
+
+Clone the repo, `cd` in, run Claude Code:
 
 ```bash
-./install.sh
+git clone https://github.com/jovanv95dbx/ai-platform-kit.git
+cd ai-platform-kit
+claude
 ```
+
+Claude Code auto-discovers the skills in `.claude/skills/`. No install step needed.
 
 ### Prerequisites
 
