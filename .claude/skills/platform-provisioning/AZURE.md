@@ -133,6 +133,17 @@ Terraform provider configs cannot reference resource attributes for `host`. When
 - **Phase 1**: Create workspaces, networking, private endpoints
 - **Phase 2**: Set workspace URLs in tfvars, apply again for catalogs, schemas, grants
 
+### Key Vault `network_acls.default_action = "Deny"` blocks Terraform-driven CMK creation
+
+When you lock down a customer-managed Key Vault with `network_acls.default_action = "Deny"`, Terraform's `azurerm_key_vault_key` create step (run from your local IP) fails with `ForbiddenByFirewall: Client address is not authorized` even when `network_acls.virtual_network_subnet_ids` includes the Databricks subnets. Reason: the Databricks subnets aren't where the deployer is calling from — your laptop / CI runner is. Putting the Databricks subnets in `virtual_network_subnet_ids` doesn't help the deployer's request.
+
+**Two acceptable fixes:**
+
+1. **Recommended for prod:** keep `default_action = "Allow"` until after the apply, OR add `network_acls.bypass = "AzureServices"` AND your deployer IP to `network_acls.ip_rules` for the duration of the apply, then PATCH to `Deny` after.
+2. **For SRA-style deploys:** rely on access policies + private endpoint to the KV; don't set `network_acls` at all in the SRA template (it's permissive by default for the deployer; private endpoint provides the network restriction at runtime).
+
+Either way: do NOT set `default_action = "Deny"` without adding the deployer's egress IP. The SRA reference template omits `network_acls` for exactly this reason.
+
 ### CMK for managed disks — DES Key Vault access
 
 When enabling CMK for managed disks (`managed_disk_cmk_key_vault_key_id`), Azure creates a Disk Encryption Set (DES) in the managed resource group. The DES has a managed identity that needs Key Vault access — but this identity only exists AFTER workspace creation. Pattern from the SRA:
@@ -171,6 +182,20 @@ Azure DNS zone VNet link deletions take 30-60+ minutes. This is an Azure API lim
 ### .databrickscfg DEFAULT profile conflict
 
 If `~/.databrickscfg` has a DEFAULT profile with OAuth M2M credentials, the Databricks Terraform provider may use those instead of az-cli auth. The templates set `auth_type = "azure-cli"` explicitly to prevent this.
+
+### Stale `DATABRICKS_*` env vars override `auth_type = azure-cli`
+
+Same trap as AWS, in reverse. If your shell has stale `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, or `DATABRICKS_ACCOUNT_ID` set (often from a prior AWS or M2M session), they **silently override** the explicit `auth_type = "azure-cli"` provider config — Terraform tries to authenticate as the leftover SP and gets `invalid_client` against the Azure account host. **Fix:** prefix the apply with `env -u DATABRICKS_HOST -u DATABRICKS_CLIENT_ID -u DATABRICKS_CLIENT_SECRET -u DATABRICKS_ACCOUNT_ID terraform apply`, or `unset` them in your shell.
+
+### Customer-says-`tier=PREMIUM` vs Terraform's `sku="premium"` (intake-time call-out)
+
+The customer will often say "we need Premium tier" or "we need Enterprise tier". Always translate at intake time:
+
+- Customer "Standard tier" → `sku = "standard"`
+- Customer "Premium tier" → `sku = "premium"`
+- Customer "Enterprise tier" → `sku = "premium"` (Enterprise is account-level licensing, not a `sku` value — see "Azure SKU is always 'premium' in Terraform")
+
+Confirm with the customer in turn 1 of the conversation: "Just to confirm — by 'Enterprise' you mean the Enterprise account licensing for PrivateLink/CMK/IP-ACL, right? On Azure that maps to `sku = premium` at the workspace resource level."
 
 ## Default Network Posture
 

@@ -40,7 +40,36 @@ data "aws_iam_policy_document" "uc_assume_role" {
 }
 ```
 
-The IAM policy on the role needs `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:GetBucketLocation` on the metastore bucket, plus `sts:AssumeRole` on itself (self-assume).
+The IAM policy on the role needs S3 actions on the metastore bucket **plus `sts:AssumeRole` on the role's own ARN**. Both pieces are required — the trust policy alone is NOT sufficient.
+
+```hcl
+data "aws_iam_policy_document" "uc_role_inline" {
+  # S3 access on the metastore + catalog buckets
+  statement {
+    effect    = "Allow"
+    actions   = [
+      "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+      "s3:ListBucket", "s3:ListBucketMultipartUploads",
+      "s3:ListMultipartUploadParts", "s3:AbortMultipartUpload",
+      "s3:GetBucketLocation", "s3:GetBucketTagging", "s3:GetBucketAcl",
+    ]
+    resources = [
+      aws_s3_bucket.metastore.arn,        "${aws_s3_bucket.metastore.arn}/*",
+      # plus per-catalog bucket ARNs
+    ]
+  }
+
+  # CRITICAL: self-assume must be in the INLINE policy too — UC validates by having
+  # the role assume itself. Trust policy alone fails with "non self-assuming role".
+  statement {
+    effect    = "Allow"
+    actions   = ["sts:AssumeRole"]
+    resources = [local.uc_role_arn]
+  }
+}
+```
+
+**Why both are required:** the trust policy says "this role MAY be assumed by ARN X"; the inline policy says "this role MAY call sts:AssumeRole on resource Y". UC's validation flow has the role call `sts:AssumeRole` against itself, which requires the *action* in its own inline policy in addition to the trust permission. If you only have the trust statement, `databricks_storage_credential.validate()` fails with `"IAM role for storage credential was found to be non self-assuming"`.
 
 ## S3 Bucket Setup
 
@@ -135,6 +164,22 @@ Without `USE_CATALOG` + `USE_SCHEMA` + `SELECT` on `account users`, catalogs do 
 **Metastore assignment via REST API is unreliable.** The `PUT /api/2.0/accounts/{id}/workspaces/{ws_id}/metastores/{ms_id}` endpoint returns `Invalid UUID string` errors even with valid UUIDs. Use Terraform (`databricks_metastore_assignment`) instead -- it works reliably.
 
 **SP needs explicit metastore permissions on foreign metastores.** If you assign a metastore someone else owns, the SP needs `CREATE_CATALOG`, `CREATE_EXTERNAL_LOCATION`, `CREATE_STORAGE_CREDENTIAL` grants on the metastore before it can create catalogs.
+
+**Storage credential creation requires the SP to own the metastore (or have CREATE_STORAGE_CREDENTIAL).** When the deploying SP is *not* the metastore owner and not an Account Admin, `databricks_storage_credential` creation fails with auth errors. Cleanest fix: transfer metastore ownership to the SP immediately after metastore creation:
+
+```python
+from databricks.sdk import AccountClient
+from databricks.sdk.service.catalog import UpdateAccountsMetastore
+ac = AccountClient(profile="<account-profile>")
+ac.metastores.update(
+    metastore_id="<id>",
+    metastore_info=UpdateAccountsMetastore(owner="<sp-application-id>"),
+)
+```
+
+If you're following the canonical Account-Admin-SP pattern from `platform-provisioning/AWS.md`, no extra step is needed — Account Admin SPs implicitly own metastores they create.
+
+**IAM trust policy propagation race vs `databricks_external_location`.** After updating an IAM trust policy via `null_resource` + AWS CLI (e.g. to add the storage credential's auto-generated UUID as the `sts:ExternalId`), `databricks_storage_credential.validate()` may return PASS while a subsequent `databricks_external_location` create still 403s with `"AWS IAM role does not have READ permissions"`. The cause is eventual consistency on the IAM trust update (typically 30–60s). **Fix:** insert a `time_sleep { create_duration = "60s" }` between the trust update and the `external_location` resource, OR retry the apply once on 403.
 
 **External location required for catalogs on foreign metastores.** If using a metastore with no storage root (vending machine) or one you do not own, you must create a storage credential + external location for your own S3 bucket first, then `CREATE CATALOG ... MANAGED LOCATION 's3://...'`.
 

@@ -138,6 +138,23 @@ resource "databricks_catalog" "dev" {
 
 **Storage container names must be lowercase.** Azure rejects uppercase container names. Use `lower()` when the prefix might have uppercase characters.
 
+**`storage_account_name` is deprecated on `azurerm_storage_container` (AzureRM 4.x).** Use `storage_account_id` instead. Old:
+```hcl
+resource "azurerm_storage_container" "uc" {
+  name                  = "uc-metastore"
+  storage_account_name  = azurerm_storage_account.uc.name   # DEPRECATED on 4.x
+  container_access_type = "private"
+}
+```
+New (AzureRM 4.x):
+```hcl
+resource "azurerm_storage_container" "uc" {
+  name               = "uc-metastore"
+  storage_account_id = azurerm_storage_account.uc.id        # required on 4.x
+}
+```
+Old form throws `Error: Unsupported argument` on AzureRM provider >= 4.0. Pin provider version explicitly in `required_providers` if you need to control which form applies.
+
 **`databricks_mws_permission_assignment` does NOT work on Azure.** It is AWS/GCP only. On Azure, account-level groups are visible in workspaces via UC identity federation automatically -- no explicit workspace assignment needed.
 
 **Azure CLI token expiry (~60 min).** Long Terraform applies (workspace creation + DNS operations) can exceed the token lifetime. If apply fails with `ExpiredAuthenticationToken`, re-run `az login` and `terraform apply` -- Terraform picks up where it left off.

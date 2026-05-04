@@ -25,6 +25,7 @@ These are not suggestions. Violating them causes silent failures or security gap
 3. **Service principals for all automated jobs.** CI/CD pipelines, scheduled jobs, and orchestration must use service principals, not user identities. User tokens expire, users leave the org, and user-based jobs break silently.
 4. **Least-privilege admin model.** Only the platform team gets ADMIN on workspaces. Everyone else gets USER. Data access is controlled through UC grants, not workspace roles.
 5. **Pre-existing groups: check before creating.** Account-level groups persist across deployments and workspace deletions. Always list existing groups before creating new ones to avoid SCIM conflict errors.
+6. **When an SP creates UC objects, the human admins do NOT inherit access.** Workspace admin is the workspace ACL plane. UC privileges are a separate plane. An SP that creates a catalog/external-location/storage-credential becomes its **owner**; nobody else sees it in the UI until you explicitly grant. **Every deploy that uses an SP MUST include an explicit grant block** giving the human admin group `ALL_PRIVILEGES` on the catalog, `MANAGE` on external locations, and `MANAGE` on storage credentials — OR transfer ownership to that group. Otherwise the customer's human admins log in to a workspace where they can't see their own catalog.
 
 ## Recommended group structure
 
@@ -110,6 +111,26 @@ Use modern privilege names only. Legacy names (e.g., USAGE instead of USE_CATALO
 - **"SCIM conflict"** -- the user or group already exists at the account level. List first, then update the existing object instead of creating a new one.
 - **"Group with name X already exists"** -- account-level groups persist across deployments AND workspace deletions. **Always list existing groups first** via `GET /api/2.0/accounts/{id}/scim/v2/Groups` before creating. If the group exists, use `data.databricks_group` (data source) instead of `databricks_group` (resource) in Terraform. Alternatively, delete the stale group via SCIM API if it's from a previous deployment. Do NOT blindly create groups without checking — SCIM conflicts halt the entire terraform apply.
 - **"permissions are [...] but have to be [...]"** -- you used a legacy privilege name. Switch to modern names: USE_CATALOG, USE_SCHEMA, CREATE_TABLE, CREATE_FUNCTION, CREATE_SCHEMA, SELECT, MODIFY.
+- **"Principal does not exist" on `databricks_permissions` for a freshly-created account group** -- account-level SCIM groups created in the same `terraform apply` are visible to the UC plane (`databricks_grants`) immediately, but the **workspace ACL plane** (`databricks_permissions` on `sql_endpoint`, `cluster`, `job`, etc.) takes 5–10 minutes to see the new group. Symptom: UC grants succeed, then a workspace-resource grant a few resources later fails with `"Principal: GroupName(name=...) does not exist"`. **Three fixes:** (a) use `databricks_grants` only and let the customer set workspace-resource permissions in the UI later, (b) add `time_sleep { create_duration = "10m" }` between the group creation and the `databricks_permissions` resource, or (c) split into two `terraform apply` runs (group + UC grants in run 1, workspace ACLs in run 2).
+- **Customer claims "the group already exists" but it doesn't** -- happens when the customer is thinking of a group that exists in another workspace, in their IdP, or in a stale memory of a prior deployment. Always verify with `databricks account groups list --output json | jq '.[] | select(.displayName == "X")'` before deciding to use `data.databricks_group` vs `databricks_group`. If the group genuinely doesn't exist yet in the Databricks account, create it with `databricks_group` and bring the customer along.
+- **"You do not have permission to access this page in workspace ..."** when a human admin tries to view a catalog/external-location an SP just created -- workspace admin entitles access to the workspace UI but does NOT grant UC privileges. The SP that created the UC object owns it; nobody else sees it. **Fix:** add explicit grant blocks in the deploy:
+  ```hcl
+  resource "databricks_grants" "human_admins_on_catalog" {
+    catalog = databricks_catalog.this.name
+    grant {
+      principal  = var.human_admin_group  # account-level SCIM group containing humans
+      privileges = ["ALL_PRIVILEGES"]
+    }
+  }
+  resource "databricks_grants" "human_admins_on_external_location" {
+    external_location = databricks_external_location.this.name
+    grant {
+      principal  = var.human_admin_group
+      privileges = ["MANAGE", "BROWSE", "READ_FILES", "WRITE_FILES", "CREATE_EXTERNAL_TABLE", "CREATE_MANAGED_STORAGE"]
+    }
+  }
+  ```
+  Or transfer ownership via `databricks_metastore.this.owner = var.human_admin_group` for the metastore root, and `databricks_catalog.this.owner` / `databricks_external_location.this.owner` for child objects.
 
 ## Cross-links
 

@@ -29,7 +29,7 @@ Provision Databricks workspaces end-to-end. Claude writes Terraform from scratch
 2. **Auth check** -- verify credentials, gather all missing inputs in one shot
 3. **Write Terraform** -- generate HCL tailored to the request, using reference templates as patterns
 4. **Deploy** -- terraform init, plan (mandatory review), apply
-5. **Verify** -- confirm workspace is reachable, optionally run compute tests
+5. **Verify** -- **MANDATORY**: follow `deployment-verification/SKILL.md`. Run **all three compute paths** (classic cluster + serverless SQL warehouse + serverless notebook job) against a UC table. One serverless test does not count as verified. Skipping classic is the most common reason real-world skill bugs reach customers. Read the verification skill BEFORE you finish step 4 — classic cluster cold-start is 10–15 min so start it early.
 
 Once you know the customer's cloud, read the corresponding cloud file (AZURE.md, AWS.md, or GCP.md) in this directory for cloud-specific auth, providers, gotchas, and template details. Do NOT read other cloud files -- they add noise.
 

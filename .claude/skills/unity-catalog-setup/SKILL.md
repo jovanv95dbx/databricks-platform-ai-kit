@@ -135,7 +135,8 @@ After deploying Unity Catalog, verify every item:
 4. Per-env catalogs created with `MANAGED LOCATION` pointing to external locations
 5. Medallion schemas created (bronze/silver/gold) in each catalog
 6. UC permissions granted to account-level groups (not users, not workspace-local groups)
-7. Verify with test query on BOTH classic compute (1+ workers) AND serverless SQL
+7. **Human admins explicitly granted on UC objects.** When the deploying SP is the metastore/catalog/external-location owner, human admins (even workspace admins) cannot see those objects in the UI until you grant them. ALWAYS include a `databricks_grants` block giving the human-admin SCIM group `ALL_PRIVILEGES` on each catalog and `MANAGE` on each external location, OR transfer ownership of those objects to that group. Otherwise the customer's admins log in to a workspace where they can't see their own data. See `identity-governance/SKILL.md` error-handling section for the exact resource block.
+8. Verify with test query on BOTH classic compute (1+ workers) AND serverless SQL
    - Classic: `spark.sql("SELECT * FROM dev.bronze.test_table")`
    - Serverless: run same query in SQL warehouse
    - If classic fails with "Databricks Default Storage cannot be accessed using Classic Compute" --> you are on vending machine storage, deploy self-managed metastore

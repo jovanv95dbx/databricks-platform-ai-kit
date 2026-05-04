@@ -5,6 +5,8 @@ description: "Configure Databricks workspace settings. Use when the user asks to
 
 # Databricks Workspace Configuration
 
+> **POST-DEPLOYMENT VERIFICATION IS MANDATORY.** Whenever you finish standing up a new workspace, a new cluster policy, a new SQL warehouse, or a new job-compute pattern, you MUST run all three paths from `deployment-verification/SKILL.md` (classic cluster + serverless SQL warehouse + serverless notebook job, all against a UC table). One-path verification is incomplete work. Read that skill before you call anything "done."
+
 ## How to interact with the customer
 
 Apply MINIMAL pushback. These are day-2 operations -- the customer generally knows what they want.
