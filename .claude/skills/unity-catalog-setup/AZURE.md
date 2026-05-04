@@ -136,7 +136,16 @@ resource "databricks_catalog" "dev" {
 
 **Two-phase deploy for private link + UC.** Terraform provider config blocks cannot reference resource attributes for `host`. If the workspace URL comes from a `databricks_mws_workspace` resource, the workspace provider cannot be initialized in the same apply. Deploy workspaces first, then set URLs in tfvars and re-apply.
 
-**Storage container names must be lowercase.** Azure rejects uppercase container names. Use `lower()` when the prefix might have uppercase characters.
+**Storage container names must be lowercase AND have no underscores.** Azure container naming is `^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$` — lowercase alphanumerics + hyphens only, 3–63 chars, must start/end alphanumeric. **No underscores allowed.** This collides directly with UC catalog naming convention (which requires underscores: `acme_prod` not `acme-prod`). Symptom: `400 BadRequest: only lowercase alphanumeric characters and hyphens allowed`.
+
+**Pattern**: keep the catalog name as-is and DERIVE the container name with `replace(name, "_", "-")`:
+```hcl
+locals {
+  catalog_name   = "${var.prefix}_prod"               # acme_prod  (UC: underscore)
+  container_name = replace(local.catalog_name, "_", "-")  # acme-prod  (Azure: hyphen)
+}
+```
+Use `lower()` on top of that if the prefix might have uppercase. Do NOT cargo-cult lowercase from the rest of this file without also handling the underscore rewrite — `lower("acme_prod")` is still `acme_prod` and Azure rejects it.
 
 **`storage_account_name` is deprecated on `azurerm_storage_container` (AzureRM 4.x).** Use `storage_account_id` instead. Old:
 ```hcl

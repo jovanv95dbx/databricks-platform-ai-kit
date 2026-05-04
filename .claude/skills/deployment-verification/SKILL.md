@@ -35,10 +35,20 @@ The most informative test. Surfaces:
 **Minimum cluster spec:**
 
 ```hcl
+data "databricks_node_type" "verify" {
+  # DO NOT use the bare "smallest" preset — on AWS it picks m5d.large (2 vCPU / 8GB),
+  # which fails Spark driver startup with DriverStartupTimeout 300s on a fresh
+  # workspace (JVM warmup needs more cores). Pin a real floor:
+  min_cores      = 8
+  min_memory_gb  = 32
+  local_disk     = true
+  category       = "General Purpose"
+}
+
 resource "databricks_cluster" "verify_classic" {
   cluster_name            = "verify-classic-${var.workspace_name}"
   spark_version           = data.databricks_spark_version.lts.id  # latest LTS
-  node_type_id            = data.databricks_node_type.smallest.id  # cloud-specific
+  node_type_id            = data.databricks_node_type.verify.id
   num_workers             = 1   # NOT autoscaled — keep deterministic
   autotermination_minutes = 0   # CRITICAL: 0 = no auto-terminate during JVM warmup
                                 # If you set 30, on a fresh workspace the cluster can
@@ -52,6 +62,15 @@ resource "databricks_cluster" "verify_classic" {
                                                     # numeric SP id. For a user, the
                                                     # email. For a group, the group name.
 
+  # AWS only — required when local_disk = false OR when the chosen instance type
+  # doesn't have NVMe instance store (most non-d-series). Without this, cluster
+  # creation fails with "Cluster requires at least one EBS volume".
+  aws_attributes {
+    ebs_volume_count = 1
+    ebs_volume_size  = 100
+    ebs_volume_type  = "GENERAL_PURPOSE_SSD"
+  }
+
   # Tag so it can be identified + cleaned up
   custom_tags = {
     purpose = "deployment-verification"
@@ -60,7 +79,9 @@ resource "databricks_cluster" "verify_classic" {
 }
 ```
 
-**Expected timing:** 10–15 min cold-start on a brand-new workspace (JVM warmup + UC metadata cache + storage credential resolution). The skill warning about classic cold-start is REAL but it's not an excuse to skip the test — it's a reason to start the cluster early in your deploy and verify near the end.
+**Why the explicit `min_cores`/`min_memory_gb` floor:** the bare `data "databricks_node_type" "smallest"` selector picks the cheapest UC-eligible node, which on AWS is m5d.large (2 vCPU / 8 GB). On a fresh workspace, the Spark driver JVM warmup + UC metadata cache + storage credential resolution doesn't finish in the API's 300s `DriverStartupTimeout` window with only 2 cores — even m5d.xlarge (4 vCPU / 16 GB) has been observed to time out. m5.2xlarge (8 vCPU / 32 GB) is the lowest size that reliably starts cold. Pinning `min_cores = 8` + `min_memory_gb = 32` lets the data source pick a regional equivalent on Azure/GCP without hardcoding instance types. Use the same floor on Azure (selects `Standard_D8s_v5` or similar) and GCP (`n2-standard-8`).
+
+**Expected timing:** 5–10 min cold-start on a fresh workspace at the recommended size, 10–15 min on the smaller-than-recommended sizes that often time out anyway. The skill warning about classic cold-start is REAL but it's not an excuse to skip the test — it's a reason to start the cluster early in your deploy and verify near the end.
 
 **SQL test (run via `databricks api post /api/2.0/sql/statements` against the cluster, OR notebook task on the cluster):**
 
@@ -93,14 +114,20 @@ Fastest verification. Tests UC + serverless + storage credential resolution from
 
 ```hcl
 resource "databricks_sql_endpoint" "verify_serverless" {
-  name                  = "verify-serverless"
-  cluster_size          = "2X-Small"   # smallest serverless size
+  name                      = "verify-serverless"
+  cluster_size              = "2X-Small"   # smallest serverless size
   enable_serverless_compute = true
-  warehouse_type        = "PRO"        # PRO required for UC-aware features
-  auto_stop_mins        = 10
+  warehouse_type            = "PRO"        # PRO required for UC-aware features
+  auto_stop_mins            = 10
+  min_num_clusters          = 1            # REQUIRED — SDK warehouses.create()
+  max_num_clusters          = 1            # rejects with "0 is not a valid value
+                                           # for max_num_clusters" if either is
+                                           # omitted. Both must be >= 1.
   tags { custom_tags { key = "purpose" value = "deployment-verification" } }
 }
 ```
+
+The `databricks_sql_endpoint` resource defaults `min_num_clusters` and `max_num_clusters` to 0 if not set, but the underlying `warehouses.create()` SDK call rejects 0. Always set both explicitly to 1 (or higher if you actually want autoscaling). Symptom of omitting: `INVALID_PARAMETER_VALUE: 0 is not a valid value for max_num_clusters`.
 
 **Pass criteria:** same four-statement CRUD as Path 1 succeeds. **CRITICAL:** the Statement Execution API (`/api/2.0/sql/statements`) does NOT accept multi-statement bodies — it returns `PARSE_SYNTAX_ERROR: Syntax error at or near 'CREATE': extra input 'CREATE'`. You MUST split into 4 separate calls:
 
@@ -251,6 +278,40 @@ If a verification path FAILS due to a customer-account constraint — service qu
 4. Re-run all three paths once the customer has cleared it.
 
 The verify cluster hanging in `Starting Spark` for 30+ minutes is almost always either a customer EC2/VM capacity issue OR the JVM-warmup-vs-autotermination race (see `platform-provisioning/AWS.md` and `AZURE.md`). Diagnose which before declaring verification "blocked".
+
+## Recovering when TF state is partial (verify resources created but not in state)
+
+If a `terraform apply` is interrupted mid-create — Ctrl-C, OAuth token expired, network blip — the verify cluster (or warehouse, or job) may exist in the workspace but not in Terraform state. Re-running `terraform apply` then fails with:
+
+```
+Error: cannot create cluster: Cluster <name> already exists
+```
+
+(or the storage equivalent for warehouse/job: `name already in use`). **Never delete the workspace-side resource and let TF recreate** — you'll lose any manual fixes and may not have permission to delete it as the deployer SP. Two clean recovery paths:
+
+1. **Import the existing resource into state** (preferred):
+   ```bash
+   # Cluster
+   CID=$(databricks clusters list --filter "name=verify-classic-${WS}" --output json | jq -r '.[0].cluster_id')
+   terraform import databricks_cluster.verify_classic "$CID"
+
+   # SQL warehouse
+   WID=$(databricks warehouses list --output json | jq -r '.[] | select(.name=="verify-serverless") | .id')
+   terraform import databricks_sql_endpoint.verify_serverless "$WID"
+
+   # Job
+   JID=$(databricks jobs list --output json | jq -r '.[] | select(.settings.name=="verify-notebook") | .job_id')
+   terraform import databricks_job.verify_notebook "$JID"
+   ```
+   Then re-run `terraform plan` — it should report no changes if the workspace-side resource matches your HCL. If it shows drift, decide per-attribute whether to update state or update the workspace.
+
+2. **Delete via API + re-apply** (when you can't import — e.g. workspace lacks the resource type's import support):
+   ```bash
+   databricks clusters delete --cluster-id "$CID"
+   ```
+   Then `terraform apply` recreates from your HCL. Only safe when you're sure no other consumer depends on the resource (typically true for verify resources, since they're tagged `purpose=deployment-verification`).
+
+**Diagnostic tip:** before either path, run `terraform state list | grep verify` to confirm the resource is genuinely missing from state vs just hidden in a module. Modules show as `module.foo.databricks_cluster.verify_classic`, not `databricks_cluster.verify_classic`.
 
 ## Cleanup
 

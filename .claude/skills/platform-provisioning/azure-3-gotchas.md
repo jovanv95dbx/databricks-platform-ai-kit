@@ -72,6 +72,82 @@ resource "azurerm_key_vault_access_policy" "managed_disk" {
 
 Without this, classic clusters fail with "Azure key vault key is not found to unwrap the encryption key." Serverless is unaffected. Use access policies (not RBAC) on the Key Vault — do NOT set `enable_rbac_authorization = true` if using access policies for the DES identity. Do the same for `storage_account_identity` if using DBFS CMK.
 
+## CMK for managed services — AzureDatabricks first-party SP needs PRE-create AKV access
+
+This is **separate from and earlier than** the DES managed-disk identity gotcha above. When `customer_managed_key_enabled = true` AND `managed_services_cmk_key_vault_key_id` is set (or `managed_disk_cmk_key_vault_key_id` is set with `managed_disk_cmk_rotation_to_latest_version_enabled`), Azure validates the key vault access of the **AzureDatabricks first-party service principal** (well-known appId `2ff814a6-3304-4ab8-85cb-cd0e6f879c1d`) **before** the workspace resource provisions. If the SP doesn't have `Get / WrapKey / UnwrapKey` on the AKV at apply time, workspace create returns 403 on the KV — and there is no DES identity yet to grant access to, because the workspace doesn't exist.
+
+```hcl
+data "azuread_service_principal" "azure_databricks" {
+  client_id = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"
+}
+
+resource "azurerm_key_vault_access_policy" "azure_databricks_first_party" {
+  key_vault_id    = azurerm_key_vault.this.id
+  tenant_id       = data.azurerm_client_config.current.tenant_id
+  object_id       = data.azuread_service_principal.azure_databricks.object_id
+  key_permissions = ["Get", "WrapKey", "UnwrapKey"]
+}
+
+resource "azurerm_databricks_workspace" "this" {
+  # ...
+  customer_managed_key_enabled         = true
+  managed_services_cmk_key_vault_key_id = azurerm_key_vault_key.managed_services.id
+
+  depends_on = [azurerm_key_vault_access_policy.azure_databricks_first_party]
+}
+```
+
+**Order of grants when CMK is enabled on managed services + managed disks + DBFS root:**
+
+1. **Pre-create**: AzureDatabricks first-party SP (`2ff814a6-...`) gets `Get/WrapKey/UnwrapKey` on the AKV — required for managed-services CMK validation at workspace create time.
+2. **Post-create**: workspace's `managed_disk_identity` (DES) gets `Get/WrapKey/UnwrapKey` — required for classic cluster volume encryption.
+3. **Post-create (if DBFS CMK)**: workspace's `storage_account_identity` gets `Get/WrapKey/UnwrapKey` — required for DBFS root.
+
+All three are independent identities; each needs its own `azurerm_key_vault_access_policy`. Missing #1 is the trap because it's a pre-create requirement and the failure message points at the workspace create rather than the missing access policy.
+
+## PE-only subnets cannot be on AKV/storage `network_acls.virtual_network_subnet_ids`
+
+When you set `private_endpoint_network_policies = "Disabled"` on a subnet (typical pattern for a dedicated PE subnet), Azure removes the service-endpoint plumbing from that subnet. Adding a PE-only subnet to an AKV's or storage account's `network_acls.virtual_network_subnet_ids` returns:
+
+```
+A virtual network rule with no service endpoint detected. The subnet must
+have one or more service endpoints configured.
+```
+
+PE-only subnets are reachable from the workspace via the private endpoint; they do NOT need a service-endpoint allow-listing on the resource. The AKV/storage `network_acls` should list:
+
+- subnets that have a service endpoint to that resource (e.g. cluster subnets with `Microsoft.KeyVault` service endpoint), OR
+- the deployer's egress IP via `ip_rules`.
+
+It should **not** list dedicated PE subnets. The private endpoint is the network path; the ACL entry is redundant and rejected by the platform.
+
+## Databricks injects worker NSG rules at priorities 100–103
+
+When `network_security_group_rules_required` defaults to `AllRules` (typical when not pinned), the Databricks control plane injects required worker rules into the customer NSG at priorities **100, 101, 102, 103**. Custom rules at those priorities collide and apply fails with `Priority X is in use by Databricks-managed rule`.
+
+**Fix**: avoid priorities 100–103 in custom NSG rules. Start customer rules at 200+. If you absolutely need fine-grained control over those slots, set `network_security_group_rules_required = "NoAzureDatabricksRules"` and replicate the worker rules manually — but that's an SRA-only pattern and not recommended unless the customer's security team explicitly demands it.
+
+## Concurrent private endpoint creation against the same workspace
+
+Two private endpoints (e.g. `databricks_ui_api` + `browser_authentication`) created concurrently against the same `azurerm_databricks_workspace` cause:
+
+```
+Error: ConcurrentUpdateError on workspace ... — Workspace is being updated.
+```
+
+Azure serializes most workspace updates server-side, but PE attach is a workspace mutation and Terraform parallelism (default 10) tries to fan them out. **Fix**: add explicit `depends_on` between the two PE resources so Terraform serializes them.
+
+```hcl
+resource "azurerm_private_endpoint" "ui_api" { /* ... */ }
+
+resource "azurerm_private_endpoint" "browser_authentication" {
+  /* ... */
+  depends_on = [azurerm_private_endpoint.ui_api]
+}
+```
+
+This is also why the SRA hub-spoke template lays out PEs sequentially in `network.tf` rather than via `for_each`.
+
 ## Catalog `isolation_mode` cannot be set during creation
 
 Attempting to set `isolation_mode` during `CREATE CATALOG` returns `INVALID_PARAMETER_VALUE`. Create the catalog first, then update isolation_mode via a separate PATCH call.

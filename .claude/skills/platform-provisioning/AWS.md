@@ -354,6 +354,20 @@ Recommend a custom VPC with Secure Cluster Connectivity as the default:
 - Security group allowing internal traffic only
 - No public IP on cluster nodes
 
+### BYOVPC sizing arithmetic — **the customer's CIDR has to fit everything**
+
+When the customer dictates a small VPC CIDR (e.g. `/20`), do the subnet math at intake time, not at apply time. A `/20` is 4096 addresses; AWS reserves 5 per subnet; Databricks needs at minimum **two private subnets** (one per AZ) sized to the cluster fleet, plus a **public subnet for the NAT gateway**, plus a small **subnet for VPC endpoints** if you're using interface endpoints. Two `/21` private subnets alone exhaust a `/20` — there's no room left for the NAT public subnet. Symptom: `terraform apply` errors at the second `aws_subnet` create with `InvalidSubnet.Conflict: The CIDR ... conflicts with another subnet`.
+
+**Reference sizing** (from the SRA AWS template, which uses a `/16`):
+
+| Customer says | Use for private subnets | Use for public/NAT | Use for VPC endpoints (interface) |
+|---|---|---|---|
+| `/16` (recommended)  | 2× `/22` (1022 hosts each) | 1× `/24` | 1× `/26` |
+| `/20`                | 2× `/23`  (510 hosts each) | 1× `/26` | 1× `/27` |
+| `/22` (smallest workable) | 2× `/24` (254 hosts each) | 1× `/26` | n/a — use gateway endpoints only |
+
+**Rule of thumb:** if the customer offers anything smaller than `/22`, push back — workspace serverless egress + NAT failover + 100-node cluster fleets eat addresses fast. If they insist on `/20`, use `/23`+`/23`+`/26` (or the gateway-endpoint-only variant); never `/21`+`/21`+anything-else, the math doesn't fit. The SRA explicitly uses `/16` because it's the only size that gives headroom for cluster scaling without a re-CIDR.
+
 ## AWS Template Patterns
 
 | Pattern | When to Use |

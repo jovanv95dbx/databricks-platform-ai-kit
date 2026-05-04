@@ -49,9 +49,18 @@ provider "databricks" {
 
 ### Tenant mismatch (#1 cause of Azure auth failures)
 
-Always set `azure_tenant_id` on ALL Databricks provider blocks — both account-level and workspace-level. Without it, the provider fetches the management token from the user's home tenant, not the Databricks account tenant. Causes `IncorrectClaimException: Expected iss claim to be...` errors. Even if the user only has one tenant today, set it explicitly for safety.
+Always set `azure_tenant_id` on ALL Databricks provider blocks — both account-level and workspace-level. Without it, the provider fetches the management token from the user's **home** tenant, not the Databricks account tenant. Causes `IncorrectClaimException: Expected iss claim to be...` errors. Even if the user only has one tenant today, set it explicitly for safety.
 
-**Environment variable alternative:** If all workspaces share the same non-home tenant, set `export ARM_TENANT_ID=<tenant-id>` before running Terraform. The Databricks provider reads this automatically for all provider blocks. Useful in CI/CD pipelines. CAUTION: Do NOT set `ARM_TENANT_ID` when using MSI auth (`azure_use_msi = true`) — it causes errors in some provider versions.
+**This trap also fires for the `databricks` CLI itself, not just the Terraform provider.** Even after `az login --tenant <target-tenant>` and confirming `az account show` reports the right tenant, the `databricks` CLI can still mint a token against the user's home tenant when there are multiple. Symptom: `databricks workspaces list` returns workspaces from the wrong account. **Fix**: set `ARM_TENANT_ID=<target-tenant-id>` in the same shell as the CLI, or pass `--profile <profile>` with `azure_tenant_id` baked into the profile.
+
+**Environment variable belt-and-suspenders pattern:** for ANY long-running Azure-Databricks shell session, export `ARM_TENANT_ID` *and* set `azure_tenant_id` on every provider block. Both are read by the Databricks provider; both are read by the `databricks` CLI v2. Setting only one and trusting it is how you find this bug at hour 3 of an apply, not hour 0.
+
+```bash
+export ARM_TENANT_ID=<tenant-id>      # affects databricks CLI + databricks TF provider
+export ARM_SUBSCRIPTION_ID=<sub-id>   # also useful — locks azurerm provider in the same shell
+```
+
+CAUTION: Do NOT set `ARM_TENANT_ID` when using MSI auth (`azure_use_msi = true`) — it causes errors in some provider versions.
 
 ### `.databrickscfg` DEFAULT profile conflict
 

@@ -106,6 +106,51 @@ Grant permissions at the catalog and schema level to groups. Never to individual
 
 Use modern privilege names only. Legacy names (e.g., USAGE instead of USE_CATALOG) cause confusing errors.
 
+## One `databricks_grants` per securable — never two
+
+The Databricks `databricks_grants` resource is **authoritative** for the entire ACL of a single securable (catalog, schema, external_location, storage_credential, etc.). If you write **two** `databricks_grants` resources targeting the **same securable** — say one for the human admin group and another for `account users` — they race during `terraform apply` and the second one fails:
+
+```
+permissions for <principal> are [USE_CATALOG, ...] but have to be [USE_CATALOG, ..., MODIFY, ...]
+```
+
+The provider re-reads after applying the first resource, sees a state delta from the second's intended ACL, and rejects. The race is inherent to the resource's "I own the whole ACL" semantics — not a TF parallelism bug.
+
+**Wrong** (will race):
+```hcl
+resource "databricks_grants" "admins_on_catalog" {
+  catalog = databricks_catalog.this.name
+  grant { principal = var.human_admin_group, privileges = ["ALL_PRIVILEGES"] }
+}
+
+resource "databricks_grants" "users_on_catalog" {     # SAME securable, second resource
+  catalog = databricks_catalog.this.name
+  grant { principal = "account users", privileges = ["USE_CATALOG"] }
+}
+```
+
+**Right** — one resource per securable, multiple `grant {}` blocks:
+```hcl
+resource "databricks_grants" "catalog" {
+  catalog = databricks_catalog.this.name
+  grant { principal = var.human_admin_group, privileges = ["ALL_PRIVILEGES"] }
+  grant { principal = "account users",       privileges = ["USE_CATALOG"] }
+}
+```
+
+**Permitted exception**: two `databricks_grants` resources can coexist if they target *different* securables (e.g. one for the catalog, one for an external_location of the same catalog). The earlier "human admins" example in this skill (catalog + external_location) is fine because the securables differ.
+
+## Push back on placeholder account IDs
+
+Customers sometimes hand you a literal placeholder string for the Databricks account ID — `xxxxxxxx-xxxx-...`, `abcd1234`, `<your-account-id>`, or just a free-text "I don't have it handy, use the default". **All of those should fail the intake check, not the apply.** Account IDs are UUIDs (8-4-4-4-12 hex). Anything that doesn't match `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}` is a placeholder.
+
+When this happens, do NOT plug a "well-known" account ID from a prior deploy without confirming. Either:
+- Pull it yourself from the customer's account console (`accounts.cloud.databricks.com` or `accounts.azuredatabricks.net` → top-right user menu → "Account ID"), OR
+- Ask the customer to pull it and paste it back, OR
+- For internal Databricks demo-eng work specifically, look up the demo account ID via your own auth (`databricks current-user me --profile <my-account-profile>` — config block has `account_id`).
+
+A wrong account ID can make the apply succeed against the *wrong* account silently — far worse than a hard failure on a placeholder.
+
 ## Error handling
 
 - **"SCIM conflict"** -- the user or group already exists at the account level. List first, then update the existing object instead of creating a new one.
